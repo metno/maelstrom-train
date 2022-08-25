@@ -1,0 +1,11 @@
+argparse
+gridpp==0.6.0.dev16
+matplotlib
+netCDF4<1.6.0
+numpy
+pyyaml
+tensorflow
+tqdm
+scipy
+PyYAML
+horovod
