@@ -241,15 +241,16 @@ def main():
                     # save_best_only=True
                 )
                 callbacks += [model_checkpoint_callback]
-                callbacks += [
-                    maelstrom.callback.Validation(
-                        f"{output_folder}/{model_name}_validation.txt",
-                        model,
-                        dataset_val,
-                        validation_frequency,
-                        logger,
-                    )
-                ]
+                if do_validation:
+                    callbacks += [
+                        maelstrom.callback.Validation(
+                            f"{output_folder}/{model_name}_validation.txt",
+                            model,
+                            dataset_val,
+                            validation_frequency,
+                            logger,
+                        )
+                    ]
                 callbacks += [
                     maelstrom.callback.WeightsCallback(
                         model, filename=f"{output_folder}/weights.nc"
