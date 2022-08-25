@@ -306,6 +306,7 @@ class Validation(keras.callbacks.Callback):
         frequency=None,
         logger=None,
         verif_style=True,
+        debug=False,
     ):
         self.model = model
         self.dataset = dataset
@@ -332,6 +333,7 @@ class Validation(keras.callbacks.Callback):
         self.total_time = 0
         self.start_time = 0
         self.acc_size = 0
+        self.debug = debug
 
     def _process(self):
         while True:
@@ -390,7 +392,8 @@ class Validation(keras.callbacks.Callback):
         self.total_time = e_time - s_time
         self.num_validation += 1
         self.final_validation_scores = val_logs
-        print("Validation time: ", e_time - s_time)
+        if self.debug:
+            print("Validation time: ", e_time - s_time)
 
     def on_epoch_begin(self, epochs, logs=None):
         self.batch_results.clear()

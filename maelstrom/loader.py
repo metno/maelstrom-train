@@ -627,7 +627,7 @@ class FileLoader(DataLoader):
         normalization=None,
         extra_features=[],
         debug=False,  # Debug is needed here, since it must be available before call to super()
-        quick_metadata=False,
+        quick_metadata=True,
         **kwargs,
     ):
         """
