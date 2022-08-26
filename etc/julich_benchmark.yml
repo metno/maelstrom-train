@@ -1,0 +1,36 @@
+# This configuration is used to benchmark HPC systems
+# It runs the benchmark model for a single file, over multiple epochs
+training:
+    trainer:
+        type: keras
+    optimizer:
+        type: adam
+        learning_rate: 1.0e-2
+    num_epochs: 100
+    validation_frequency: 4 file
+loader:
+    type: file
+    filenames: [ "data/air_temperature/5TB/20200301T*Z.nc"]
+    limit_leadtimes: [0, 1, 2, 3, 4, 5]
+
+    cache_size: 0
+    patch_size: 256
+    predict_diff: True
+    batch_size: 1
+    prefetch: 1
+    num_parallel_calls: 1
+    debug: True
+models:
+    - type: BasicBenchmark
+      name: cnn
+      leadtime_dependent: False
+      neighbourhood_size: 3
+      filter_sizes: [12, 5, 5]
+output:
+    quantiles: [0.5, 0.1, 0.9]
+loss:
+    type: quantile_score
+evaluators:
+    - type: aggregator
+tensorflow:
+    num_threads: 2
