@@ -14,12 +14,10 @@ follows:
 ln -s /lustre/storeB/project/nwp/maelstrom data
 ```
 
-## Notebook example
+## Quick example
 Check out the jupyter notebook, available in [`./example.ipynb`](example.ipynb)
 
-## Command-line example
-
-To run the example, do this:
+Alternatively, run the commandline program like this:
 ```
 maelstrom-train --config etc/example.yml -m regression
 ```
