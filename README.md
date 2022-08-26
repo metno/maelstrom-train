@@ -11,7 +11,8 @@ pip install .
 This installs the `maelstrom-train` command-line tool.
 
 ## Notebook example
-Check out the jupyter notebook, available in `./example.ipynb`
+Check out the jupyter notebook, available in [`./example.ipynb`](example.ipynb)
+
 ## Example
 
 This example assumes that the MAELSTROM dataset is available in the folder `./data`. On the PPI, you can simply symlink it as
