@@ -6,13 +6,12 @@ training:
     optimizer:
         type: adam
         learning_rate: 1.0e-2
-    num_epochs: 100
+    num_epochs: 3
     validation_frequency: 4 file
 loader:
     type: file
-    filenames: [ "data/air_temperature/5TB/20200301T*Z.nc"]
-    limit_leadtimes: [0, 1, 2, 3, 4, 5]
-
+    filenames: [ "data/air_temperature/5TB/2020030[123]T*Z.nc"]
+    # limit_leadtimes: [0, 1, 2, 3, 4, 5]
     cache_size: 0
     patch_size: 256
     predict_diff: True
