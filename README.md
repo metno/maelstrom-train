@@ -23,7 +23,7 @@ ln -s /lustre/storeB/project/nwp/maelstrom data
 
 To run the example, do this:
 ```
-```maelstrom-train --config etc/example.yml -m regression
+maelstrom-train --config etc/example.yml -m regression
 ```
 The results are then output in `results/regression_*/`. `regression_validation.txt` Stores the validation score for each time
 the validation is run. `regression_agg.txt` stores the testing results for each output date and output leadtime.
