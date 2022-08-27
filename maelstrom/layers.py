@@ -17,6 +17,8 @@ def get(**kwargs):
         layer = keras.layers.Dense(**args)
     elif curr_type == "conv2d":
         layer = keras.layers.Conv2D(**args)
+    elif curr_type == "conv3d":
+        layer = keras.layers.Conv3D(**args)
     else:
         candidate_layers = inspect.getmembers(sys.modules[__name__], inspect.isclass)
         for candidate_layer in candidate_layers:
