@@ -77,27 +77,27 @@ loader_test:
     debug: True
 models:
     - type: BasicBenchmark
-      name: official
+      name: cnn
       leadtime_dependent: False
       neighbourhood_size: 3
       filter_sizes: [12, 5, 5]
     - type: BasicBenchmark
-      name: official_l5
+      name: cnn_l5
       leadtime_dependent: False
       neighbourhood_size: 3
       filter_sizes: [12, 5, 5, 5, 5]
     - type: BasicBenchmark
-      name: official_l5_r5
+      name: cnn_l5_r5
       leadtime_dependent: False
       neighbourhood_size: 5
       filter_sizes: [12, 5, 5, 5, 5]
     - type: BasicBenchmark
-      name: official_lt
+      name: cnn_lt
       leadtime_dependent: True
       neighbourhood_size: 3
       filter_sizes: [12, 5, 5]
     - type: BasicBenchmark
-      name: official_norm
+      name: cnn_norm
       leadtime_dependent: False
       neighbourhood_size: 3
       filter_sizes: [12, 5, 5]
