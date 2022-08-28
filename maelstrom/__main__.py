@@ -16,6 +16,7 @@ import tensorflow.keras.backend as K
 from tensorflow import keras
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+# os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 
 tf.random.set_seed(1000)
@@ -253,7 +254,7 @@ def main():
                     save_weights_only=True,
                     save_freq=checkpoint_frequency,
                     monitor=checkpoint_metric,
-                    # verbose=1,
+                    verbose=1,
                     mode='min',
                     save_best_only=True
                 )
