@@ -228,19 +228,7 @@ def main():
                             f"Unknown validation frequency units '{frequency}'"
                         )
 
-                checkpoint_filepath = f"{output_folder}/checkpoint"
-                checkpoint_frequency = "epoch"
-                if validation_frequency is not None:
-                    checkpoint_frequency = validation_frequency
-                model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                    filepath=checkpoint_filepath,
-                    save_weights_only=True,
-                    save_freq=checkpoint_frequency,
-                    # monitor='val_accuracy',
-                    # mode='max',
-                    # save_best_only=True
-                )
-                callbacks += [model_checkpoint_callback]
+                checkpoint_metric = 'loss'
                 if do_validation:
                     callbacks += [
                         maelstrom.callback.Validation(
@@ -251,6 +239,25 @@ def main():
                             logger,
                         )
                     ]
+                    checkpoint_metric = 'val_loss'
+
+                # Note that the ModelCheckpoint callback must be added after the validation
+                # callback, otherwise val_loss will not be recorded when the checkpoint callback is
+                # run.
+                checkpoint_filepath = f"{output_folder}/checkpoint"
+                checkpoint_frequency = "epoch"
+                if validation_frequency is not None:
+                    checkpoint_frequency = validation_frequency
+                model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+                    filepath=checkpoint_filepath,
+                    save_weights_only=True,
+                    save_freq=checkpoint_frequency,
+                    monitor=checkpoint_metric,
+                    # verbose=1,
+                    mode='min',
+                    save_best_only=True
+                )
+                callbacks += [model_checkpoint_callback]
                 callbacks += [
                     maelstrom.callback.WeightsCallback(
                         model, filename=f"{output_folder}/weights.nc"
