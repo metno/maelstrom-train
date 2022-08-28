@@ -174,56 +174,40 @@ models:
           kernel_size: [1, 3, 3]
           padding: same
           activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 12
-              activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 12
-              activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 12
-              activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
         - type: conv3d
           filters: 5
           kernel_size: [1, 3, 3]
           padding: same
           activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 5
-              activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 5
-              activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 5
-              activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
         - type: conv3d
           filters: 5
           kernel_size: [1, 3, 3]
           padding: same
           activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 5
-              activation: "relu"
-        - type: leadtimelayer
-          layer:
-              type: dense
-              units: 5
-              activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
         - type: leadtimelayer
           layer:
               type: dense
