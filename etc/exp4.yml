@@ -7,7 +7,7 @@ training:
             type: piecewise
             boundaries: [640] # Number of samples (not epochs)
             values: [1.0e-2, 1.0e-3]
-    num_epochs: 100
+    num_epochs: 1
     validation_frequency: 4 file
 loader:
     type: file
