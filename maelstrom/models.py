@@ -567,7 +567,13 @@ class Custom(Model):
             layers (list): List of layer configurations (dict)
             final_activation (str): Activation function for the final layer
         """
-        new_input_shape = get_input_size(input_shape, False, False)
+        leadtime_dependent = False
+        for layer in layers:
+            # TODO: Make more robust
+            if layer["type"].lower() == "leadtimelayer":
+                leadtime_dependent = True
+
+        new_input_shape = get_input_size(input_shape, leadtime_dependent, False)
         self._layers = layers
         self._final_activation = final_activation
         super().__init__(new_input_shape, num_outputs)

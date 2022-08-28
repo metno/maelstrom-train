@@ -19,6 +19,10 @@ def get(**kwargs):
         layer = keras.layers.Conv2D(**args)
     elif curr_type == "conv3d":
         layer = keras.layers.Conv3D(**args)
+    elif curr_type == "leadtimelayer":
+        layer = get(**kwargs["layer"])
+        args0 = {k: v for k, v in args.items() if k not in ["layer"]}
+        layer = LeadtimeLayer(layer, **args0)
     else:
         candidate_layers = inspect.getmembers(sys.modules[__name__], inspect.isclass)
         for candidate_layer in candidate_layers:
