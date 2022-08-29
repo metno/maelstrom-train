@@ -160,20 +160,6 @@ models:
         - type: dense
           units: 5
           activation: "relu"
-        - type: conv3d
-          filters: 3
-          kernel_size: [1, 3, 3]
-          padding: same
-          activation: "linear"
-        - type: dense
-          units: 3
-          activation: "relu"
-        - type: dense
-          units: 3
-          activation: "relu"
-        - type: dense
-          units: 3
-          activation: "relu"
     - type: Custom
       name: cnn_custom_lt
       final_activation: linear
