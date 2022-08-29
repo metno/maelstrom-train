@@ -576,9 +576,9 @@ class Custom(Model):
         for i, config in enumerate(self._layers):
             layer = maelstrom.layers.get(**config)
             layers += [layer]
-        # layers += [
-        #     keras.layers.Dense(self._num_outputs, activation=self._final_activation)
-        # ]
+        layers += [
+            keras.layers.Dense(self._num_outputs, activation=self._final_activation)
+        ]
         return layers
 
 
