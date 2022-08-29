@@ -243,7 +243,7 @@ class BasicBenchmark(Model):
             if self._dropout is not None:
                 layers += [keras.layers.Dropout(dropout)]
 
-        layers += [keras.layers.Dense(self._num_outputs, activation="linear")]
+        layers += [keras.layers.Dense(self._num_outputs, activation=self.last_layer_activation)]
 
         return layers
 
