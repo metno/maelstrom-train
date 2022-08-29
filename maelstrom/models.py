@@ -241,7 +241,7 @@ class BasicBenchmark(Model):
             if self._batch_normalization:
                 layers += [keras.layers.BatchNormalization()]
             if self._dropout is not None:
-                layers += [keras.layers.Dropout(dropout)]
+                layers += [keras.layers.Dropout(self._dropout)]
 
         layers += [keras.layers.Dense(self._num_outputs, activation=self._last_layer_activation)]
 
