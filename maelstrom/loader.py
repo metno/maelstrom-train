@@ -1,5 +1,6 @@
 import collections
 import copy
+import datetime
 import glob
 import json
 import multiprocessing
@@ -324,7 +325,8 @@ class DataLoader:
             self.timing["reading"] += time.time() - ss_time
 
             # Perform all processing steps here
-            predictors, targets = self.process(predictors, targets)
+            times = [self.times[f]]
+            predictors, targets = self.process(predictors, targets, times)
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
                 # self.write_debug("Clearing cache")
@@ -403,7 +405,7 @@ class DataLoader:
         else:
             return predictors, targets
 
-    def process(self, predictors, targets):
+    def process(self, predictors, targets, times):
         """Any processing step that will be performed on data after it has been loaded
 
         This can be for example, normalizing data, feature extraction, augmentation, etc.  Subclases
@@ -413,7 +415,7 @@ class DataLoader:
         # print("Before")
         # for i in range(predictors.shape[-1]):
         #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        predictors, targets = self._process(predictors, targets)
+        predictors, targets = self._process(predictors, targets, times)
         # print("#2", predictors.shape)
         predictors, targets = self.patch(predictors, targets)
         # print("After")
@@ -423,7 +425,7 @@ class DataLoader:
 
         return predictors, targets
 
-    def _process(self, predictors, targets):
+    def _process(self, predictors, targets, times):
         return predictors, targets
 
     def get_dataset(self, randomize_order=False):
@@ -1038,6 +1040,8 @@ class FileLoader(DataLoader):
             return ["land_area_fraction", "model_laf"]
         elif feature_type in ["leadtime", "x", "y"]:
             return []
+        elif feature_type in ["month_of_year", "day_of_year", "hour_of_day"]:
+            return []
         elif feature_type in ["diff", "multiply"]:
             output = list()
             if not isinstance(feature["left"], numbers.Number):
@@ -1048,7 +1052,7 @@ class FileLoader(DataLoader):
         else:
             return [feature_type]
 
-    def compute_extra_features(self, predictors):
+    def compute_extra_features(self, predictors, times):
         def neighbourhood_static_field(ar, half_width, operator=gridpp.Mean):
             assert len(ar.shape) == 4
             q = ar[0, 0, ...]
@@ -1109,6 +1113,23 @@ class FileLoader(DataLoader):
                         curr = np.tile(
                             y[None, None, ...], [curr.shape[0], curr.shape[1], 1, 1]
                         )
+                elif feature_type == "month_of_year":
+                    assert curr.shape[0] == len(times)
+                    for i in range(curr.shape[0]):
+                        date, hour = maelstrom.util.unixtime_to_date(times[i])
+                        month = date // 100 % 100
+                        curr[i, ...] = month
+                elif feature_type == "day_of_year":
+                    assert curr.shape[0] == len(times)
+                    for i in range(curr.shape[0]):
+                        dt = datetime.datetime.utcfromtimestamp(int(times[i]))
+                        day = int(dt.strftime("%j"))
+                        curr[i, ...] = day
+                elif feature_type == "hour_of_day":
+                    for i in range(curr.shape[0]):
+                        validtimes = times[0] + self.leadtimes
+                        for lt in range(curr.shape[1]):
+                            curr[i, lt, ...] = validtimes[lt] // 3600 % 24
                 elif feature_type == "model_laf":
                     I = predictor_names_loaded.index("model_laf")
                     curr = predictors[..., I]
@@ -1140,11 +1161,11 @@ class FileLoader(DataLoader):
             predictors = np.concatenate((predictors, extra_values), axis=-1)
         return predictors
 
-    def _process(self, predictors, targets):
+    def _process(self, predictors, targets, times):
         """This function needs to know what predictors to keep"""
 
         ss_time = time.time()
-        predictors = self.compute_extra_features(predictors)
+        predictors = self.compute_extra_features(predictors, times)
         self.timing["feature_extraction"] += time.time() - ss_time
 
         if self.predict_diff:
