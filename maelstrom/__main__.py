@@ -168,8 +168,6 @@ def main():
             experimental_run_tf_function=False,
         )
 
-        if args.load_weights is not None:
-            model.load_weights(args.load_weights + "/checkpoint")
         if main_process:
             print(model.summary())
 
@@ -296,8 +294,11 @@ def main():
             print("\n### Training ###")
             maelstrom.util.print_memory_usage()
             history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
+            print("LOADING")
+            model.load_weights(checkpoint_filepath)
         else:
             history = None
+            model.load_weights(args.load_weights + "/checkpoint")
 
         if main_process:
             logger.add("Timing", "Training", "end_time", int(time.time()))
