@@ -357,26 +357,37 @@ class Validation(keras.callbacks.Callback):
     def run_validation(self, epoch, batch, logs):
         s_time = time.time()
         count = 0
-        val_logs = dict()
-        for x, y in self.dataset:
-            ss_time = time.time()
-            curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
 
-            # Note: test_on_batch messes with the accumulated loss value of model. This means that
-            # the reported training loss is a mix of the training loss and the validation loss. By
-            # resetting the metrics here, we ensure they are not mixed. However, this means the
-            # metrics are no longer accumulated.
-            self.model.reset_metrics()
-            for k, v in curr_logs.items():
-                new_key = "val_%s" % k
-                if new_key not in val_logs:
-                    val_logs[new_key] = 0
-                val_logs[new_key] += v
-            count += 1
-            self.acc_size += np.product(x.shape) * 4
+        if 0:
+            # Use model.test_on_patch. The problem is that the metrics must be reset, and therefore
+            # the loss gets reset.
+            val_logs = dict()
+            for x, y in self.dataset:
+                # Note: test_on_batch messes with the accumulated loss value of model. This means that
+                # the reported training loss is a mix of the training loss and the validation loss. By
+                # resetting the metrics here, we ensure they are not mixed. However, this means the
+                # metrics are no longer accumulated.
+                self.model.reset_metrics()
+                curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
+                for k, v in curr_logs.items():
+                    new_key = "val_%s" % k
+                    if new_key not in val_logs:
+                        val_logs[new_key] = 0
+                    val_logs[new_key] += v
+                count += 1
+                self.acc_size += np.product(x.shape) * 4
 
-        for k, v in val_logs.items():
-            val_logs[k] = v / count
+            for k, v in val_logs.items():
+                val_logs[k] = v / count
+        else:
+            # This solution preserves the loss
+            loss = 0
+            for x, y in self.dataset:
+                p = self.model.predict_on_batch(x)
+                loss += self.model.loss(y, p).numpy()
+                count += 1
+            loss /= count
+            val_logs = {"val_loss": loss}
 
         # Add validation to logs, so that it shows up on the tensorflow bar
         for k, v in val_logs.items():
