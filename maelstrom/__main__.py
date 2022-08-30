@@ -198,9 +198,9 @@ def main():
             if multigpu:
                 callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
             if main_process:
-                # callbacks += [
-                #     maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True)
-                # ]
+                callbacks += [
+                    maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
+                ]
                 callbacks += [timing_callback]
                 validation_frequency = None
                 if "validation_frequency" in config["training"]:
@@ -231,7 +231,7 @@ def main():
                 if do_validation:
                     callbacks += [
                         maelstrom.callback.Validation(
-                            f"{output_folder}/{model_name}_validation.txt",
+                            f"{output_folder}/{model_name}_val.txt",
                             model,
                             dataset_val,
                             validation_frequency,
@@ -608,7 +608,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
                 filename, leadtimes, points, quantiles, attributes
             )
         elif eval_type == "aggregator":
-            filename = f"{output_folder}/{model_name}_agg.txt"
+            filename = f"{output_folder}/{model_name}_test.txt"
             evaluator = maelstrom.evaluator.Aggregator(filename, leadtimes, loss)
         else:
             raise ValueError(f"Unknown validation type {eval_type}")
