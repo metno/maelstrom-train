@@ -446,7 +446,8 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     )
 
     # Which input predictor is the raw forecast?
-    Ip = loader.predictor_names.index("air_temperature_2m")
+    if loader.predict_diff:
+        Ip = loader.predictor_names.index("air_temperature_2m")
     total_loss = 0
     count = 0
 
