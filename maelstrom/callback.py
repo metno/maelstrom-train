@@ -361,6 +361,12 @@ class Validation(keras.callbacks.Callback):
         for x, y in self.dataset:
             ss_time = time.time()
             curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
+
+            # Note: test_on_batch messes with the accumulated loss value of model. This means that
+            # the reported training loss is a mix of the training loss and the validation loss. By
+            # resetting the metrics here, we ensure they are not mixed. However, this means the
+            # metrics are no longer accumulated.
+            self.model.reset_metrics()
             for k, v in curr_logs.items():
                 new_key = "val_%s" % k
                 if new_key not in val_logs:
