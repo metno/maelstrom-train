@@ -613,3 +613,6 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             raise ValueError(f"Unknown validation type {eval_type}")
         evaluators += [evaluator]
     return evaluators
+
+if __name__ == "__main__":
+    main()

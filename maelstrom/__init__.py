@@ -33,14 +33,6 @@ def load_yaml(filename):
     return S
 
 
-__all__ = []
-# Can't use the name "loader", because then there is a namespace conflict with maelstrom.loader
-for the_loader, module_name, is_pkg in pkgutil.walk_packages(__path__):
-    __all__.append(module_name)
-    _module = the_loader.find_module(module_name).load_module(module_name)
-    globals()[module_name] = _module
-
-
 """
 def calc_sensitivity(model, loader):
     num_predictors = loader.num_predictors
@@ -55,11 +47,18 @@ def merge_configs(configs):
     return config
 
 
+__all__ = []
+# Can't use the name "loader", because then there is a namespace conflict with maelstrom.loader
+for the_loader, module_name, is_pkg in pkgutil.walk_packages(__path__):
+    if module_name == "__main__":
+        continue
+
+    __all__.append(module_name)
+    _module = the_loader.find_module(module_name).load_module(module_name)
+    globals()[module_name] = _module
+
+
 def main():
     import maelstrom.__main__
 
     maelstrom.__main__.main()
-
-
-if __name__ == "__main__":
-    main()

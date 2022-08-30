@@ -53,7 +53,7 @@ setuptools.setup(
     include_package_data=True,
     entry_points={
         "console_scripts": [
-            "maelstrom-train=maelstrom:main",
+            "maelstrom-train=maelstrom.__main__:main",
         ],
     },
 )
