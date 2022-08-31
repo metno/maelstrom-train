@@ -1,3 +1,4 @@
+# Smaller patches
 training:
     trainer:
         type: keras
@@ -16,7 +17,7 @@ loader:
     # normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 2
-    patch_size: 256
+    patch_size: 64
     predict_diff: True
     batch_size: 1
     prefetch: 1
@@ -114,10 +115,104 @@ models:
     - type: Unet
       name: unet_lt
       with_leadtime: True
-    - type: Dense
-      name: dense_l5_n5
-      layers: 5
-      nodes: 5
+    - type: Custom
+      name: cnn_custom
+      final_activation: linear
+      layers:
+        - type: conv3d
+          filters: 12
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+    - type: Custom
+      name: cnn_custom_lt
+      final_activation: linear
+      layers:
+        - type: conv3d
+          filters: 12
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
 output:
     quantiles: [0.5, 0.1, 0.9]
 loss:
