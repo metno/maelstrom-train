@@ -184,6 +184,7 @@ class BasicBenchmark(Model):
         leadtime_dependent=False,
         dropout=None,
         batch_normalization=False,
+        separable=False,
     ):
         self._filter_sizes = filter_sizes
         self._neighbourhood_size = neighbourhood_size
@@ -193,6 +194,7 @@ class BasicBenchmark(Model):
         self._leadtime_dependent = leadtime_dependent
         self._dropout = dropout
         self._batch_normalization = batch_normalization
+        self._separable = separable
 
         new_input_shape = get_input_size(input_shape, self._leadtime_dependent, False)
 
@@ -220,14 +222,24 @@ class BasicBenchmark(Model):
         else:
         """
         if len(self._input_shape) == 4:
-            func = keras.layers.Conv3D
-            conv_size = [
-                self._time_size,
-                self._neighbourhood_size,
-                self._neighbourhood_size,
-            ]
+            if self._separable:
+                func = maelstrom.layers.SeparableConv2D
+                conv_size = [
+                    self._neighbourhood_size,
+                    self._neighbourhood_size,
+                ]
+            else:
+                func = keras.layers.Conv3D
+                conv_size = [
+                    self._time_size,
+                    self._neighbourhood_size,
+                    self._neighbourhood_size,
+                ]
         else:
-            func = keras.layers.Conv2D
+            if self._separable:
+                func = keras.layers.SeparableConv2D
+            else:
+                func = keras.layers.Conv2D
             conv_size = [self._neighbourhood_size, self._neighbourhood_size]
         for size in self._filter_sizes:
             layers += [
