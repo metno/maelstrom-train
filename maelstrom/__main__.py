@@ -64,10 +64,10 @@ def main():
             print("Num GPUs Available: ", len(gpus))
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
-            if gpus:
-                tf.config.experimental.set_visible_devices(
-                    gpus[hvd.local_rank()], "GPU"
-                )
+        if gpus:
+            tf.config.experimental.set_visible_devices(
+                gpus[hvd.local_rank()], "GPU"
+            )
     elif args.hardware == "gpu":
         gpus = tf.config.experimental.list_physical_devices("GPU")
         print("Num GPUs Available: ", len(gpus))
@@ -160,7 +160,8 @@ def main():
         model = model_config["model"]
         optimizer = maelstrom.optimizer.get(**config["training"]["optimizer"])
         if multigpu:
-            optimizer = hvd.DistributedOptimizer(optimizer)
+            optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
+                    average_aggregated_gradients=True)
         model.compile(
             optimizer=optimizer,
             loss=loss,
@@ -195,6 +196,7 @@ def main():
         if args.do_train:
             if multigpu:
                 callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
+                callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
             if main_process:
                 callbacks += [
                     maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
@@ -291,15 +293,18 @@ def main():
         # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
         # and skip training (this could be the raw model for example). However, we might still want
         # to run validation using the raw model, therefore we will still try to train it
+        if args.load_weights is not None and main_process:
+            input_checkpoint_filepath = args.load_weights + "/checkpoint"
+            print("Loading weights from {input_checkpoint_filepath}")
+            model.load_weights(input_checkpoint_filepath)
         if args.do_train:
             print("\n### Training ###")
             maelstrom.util.print_memory_usage()
             history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
-            print("LOADING")
-            model.load_weights(checkpoint_filepath)
+            if main_process:
+                model.load_weights(checkpoint_filepath)
         else:
             history = None
-            model.load_weights(args.load_weights + "/checkpoint")
 
         if main_process:
             logger.add("Timing", "Training", "end_time", int(time.time()))
