@@ -178,12 +178,10 @@ def main():
         logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
         model_description = model.description()
         model_description.update(model_config["settings"])
-        model_description["Num traininable parameters"] = int(
-            np.sum([K.count_params(w) for w in model.trainable_weights])
-        )
-        model_description["Num non-trainable parameters"] = int(
-            np.sum([K.count_params(w) for w in model.non_trainable_weights])
-        )
+        num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))
+        num_non_trainable_weights = int(np.sum([K.count_params(w) for w in model.non_trainable_weights]))
+        model_description["Num traininable parameters"] = num_trainable_weights
+        model_description["Num non-trainable parameters"] = num_non_trainable_weights
         logger.add("Model", model_description)
         logger.add("Dataset", loader.description())
         logger.add("Timing", "Start time", int(start_time))
@@ -257,11 +255,14 @@ def main():
                     save_best_only=True
                 )
                 callbacks += [model_checkpoint_callback]
-                callbacks += [
-                    maelstrom.callback.WeightsCallback(
-                        model, filename=f"{output_folder}/weights.nc"
-                    )
-                ]
+                if num_trainable_weights < 1e5:
+                    callbacks += [
+                        maelstrom.callback.WeightsCallback(
+                            model, filename=f"{output_folder}/weights.nc"
+                        )
+                    ]
+                else:
+                    print(f"Too many trainable weights {num_trainable_weights}, not writing them out")
                 if "early_stopping" in config["training"]:
                     callbacks += [
                         tf.keras.callbacks.EarlyStopping(
