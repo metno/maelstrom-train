@@ -1258,7 +1258,7 @@ class FileLoader(DataLoader):
                 predictors[..., p] -= mean
                 predictors[..., p] /= std
         e_time = time.time()
-        print(e_time - s_time)
+        # print(e_time - s_time)
 
     def denormalize(self, predictors, names):
         if self.coefficients is None:
