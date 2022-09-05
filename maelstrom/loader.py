@@ -796,7 +796,7 @@ class FileLoader(DataLoader):
         s_time = time.time()
         filename = self.filenames[index]
         mem_usage = maelstrom.util.get_memory_usage() / 1024**3
-        self.write_debug(f"Loading {filename}: {mem_usage:.1f} GB memory")
+        self.write_debug(f"Loading {index} {filename}: {mem_usage:.1f} GB memory")
         with netCDF4.Dataset(filename, "r") as ifile:
 
             def get(
