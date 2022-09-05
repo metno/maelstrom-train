@@ -789,6 +789,7 @@ class FileLoader(DataLoader):
         if normalization is not None:
             with open(normalization) as file:
                 self.coefficients = yaml.load(file, Loader=yaml.SafeLoader)
+        self.norm_cache = dict()
 
     def load_data(self, index):
         """This function needs to know what predictors/static predictors to load"""
@@ -1213,20 +1214,51 @@ class FileLoader(DataLoader):
             print(name, self.coefficients[self.predictor_names[k]])
 
     def normalize(self, predictors, names):
+        s_time = time.time()
         assert predictors.shape[-1] == len(names)
 
         if self.coefficients is None:
             return
-        for p in range(predictors.shape[-1]):
-            name = names[p]
-            if name not in self.coefficients:
-                # print(list(self.coefficients.keys()))
-                # raise ValueError(f"Could not find normalization information for {name}")
-                continue
-            mean = self.coefficients[name][0]
-            std = self.coefficients[name][1]
-            predictors[..., p] -= mean
-            predictors[..., p] /= std
+
+        """ Applying normalization parameter by parameter is slow (cache locality?). Therefore,
+            create a calibration array and cache this. This is roubly 60% faster. Apply it
+            separately for each sample and leadtime, as this saves memory but doesn't hurt
+            performance.
+        """
+        if 1:
+            P = predictors.shape[-1]
+            cache_key = tuple(names)
+            if cache_key in self.norm_cache:
+                means, stds = self.norm_cache[cache_key]
+            else:
+                means = np.zeros(P)
+                stds = np.ones(P)
+                for p, name in enumerate(names):
+                    if name in self.coefficients:
+                        means[p] = self.coefficients[name][0]
+                        stds[p] = self.coefficients[name][1]
+                means = np.tile(means, list(predictors.shape[2:-1]) + [1])
+                stds = np.tile(stds, list(predictors.shape[2:-1]) + [1])
+                self.norm_cache.clear()
+                self.norm_cache[cache_key] = means, stds
+
+            for s in range(predictors.shape[0]):
+                for t in range(predictors.shape[1]):
+                    predictors[s, t, ...] -= means
+                    predictors[s, t, ...] /= stds
+
+        else:
+            """ Old implementation. Much slower. """
+            for p in range(predictors.shape[-1]):
+                name = names[p]
+                if name not in self.coefficients:
+                    continue
+                mean = self.coefficients[name][0]
+                std = self.coefficients[name][1]
+                predictors[..., p] -= mean
+                predictors[..., p] /= std
+        e_time = time.time()
+        print(e_time - s_time)
 
     def denormalize(self, predictors, names):
         if self.coefficients is None:
