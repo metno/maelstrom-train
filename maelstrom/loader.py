@@ -322,7 +322,6 @@ class DataLoader:
             ss_time = time.time()
             predictors, targets = self.load_data(f)
             self.count_reads += 1
-            self.timing["reading"] += time.time() - ss_time
 
             # Perform all processing steps here
             times = [self.times[f]]
@@ -797,6 +796,9 @@ class FileLoader(DataLoader):
         filename = self.filenames[index]
         mem_usage = maelstrom.util.get_memory_usage() / 1024**3
         self.write_debug(f"Loading {index} {filename}: {mem_usage:.1f} GB memory")
+
+        reading_time = 0
+        reshaping_static_predictors_time = 0
         with netCDF4.Dataset(filename, "r") as ifile:
 
             def get(
@@ -862,6 +864,7 @@ class FileLoader(DataLoader):
 
                 return output.filled(np.nan)
 
+            ss_time = time.time()
             predictors = get(
                 ifile.variables["predictors"],
                 self.leadtime_indices,
@@ -869,12 +872,13 @@ class FileLoader(DataLoader):
                 self.x_range,
                 self.y_range,
             )
+            reading_time += time.time() - ss_time
             if "static_predictors" in ifile.variables:
-                ss_time = time.time()
                 if (
                     self.static_predictor_indices_to_load is None
                     or len(self.static_predictor_indices_to_load) > 0
                 ):
+                    ss_time = time.time()
                     temp = get(
                         # TODO: Leadtime indices
                         ifile.variables["static_predictors"],
@@ -883,6 +887,9 @@ class FileLoader(DataLoader):
                         self.x_range,
                         self.y_range,
                     )
+                    reading_time += time.time() - ss_time
+
+                    ss_time = time.time()
 
                     # Add leadtime dimension to static_predictors
                     has_sample = (
@@ -905,8 +912,9 @@ class FileLoader(DataLoader):
                         (predictors, static_predictors), axis=-1
                     )
                     ee_time = time.time()
-                    self.timing["reshaping_static_predictors"] += ee_time - ss_time
+                    reshaping_static_predictors_time += ee_time - ss_time
 
+            ss_time = time.time()
             targets = get(
                 ifile.variables["target_mean"],
                 self.leadtime_indices,
@@ -914,11 +922,13 @@ class FileLoader(DataLoader):
                 self.x_range,
                 self.y_range,
             )
+            reading_time += time.time() - ss_time
             targets = np.expand_dims(targets, -1)
             if self.probabilistic_target:
                 # num_targets = 1 + self.probabilistic_target
                 # target_shape = ifile.variables["target_mean"].shape + (num_targets,)
                 # targets = np.zeros(target_shape, np.float32)
+                ss_time = time.time()
                 std = get(
                     ifile.variables["target_std"],
                     self.leadtime_indices,
@@ -926,6 +936,7 @@ class FileLoader(DataLoader):
                     self.x_range,
                     self.y_range,
                 )
+                reading_time += time.time() - ss_time
                 std = np.expand_dims(std, -1)
                 targets = np.concatenate((targets, std), axis=-1)
 
@@ -933,6 +944,9 @@ class FileLoader(DataLoader):
                 predictors = np.expand_dims(predictors, 0)
                 targets = np.expand_dims(targets, 0)
             # self.write_debug("time: %.1f s" % (time.time() - s_time))
+            self.timing["reading"] += reading_time
+            self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
+            self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
             return predictors, targets
 
     def load_metadata(self, filenames):
