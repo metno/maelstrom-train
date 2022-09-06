@@ -260,8 +260,8 @@ class Convergence(keras.callbacks.Callback):
                 # Rename certain headings to verif-compatible fields
                 rename = dict()
                 rename["epoch"] = "leadtime"
-                rename["loss"] = "fcst"
-                rename["val_loss"] = "obs"
+                # rename["loss"] = "fcst"
+                # rename["val_loss"] = "obs"
 
                 keys = [rename[k] if k in rename else k for k in keys]
             self.file.write(" ".join([f"{k}" for k in keys]))
@@ -450,8 +450,8 @@ class Validation(keras.callbacks.Callback):
                 # Rename certain headings to verif-compatible fields
                 rename = dict()
                 rename["step"] = "leadtime"
-                rename["loss"] = "fcst"
-                rename["val_loss"] = "obs"
+                # rename["loss"] = "fcst"
+                # rename["val_loss"] = "obs"
 
                 keys = [rename[k] if k in rename else k for k in keys]
 
