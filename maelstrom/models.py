@@ -535,20 +535,20 @@ class Dense(Model):
         input_shape,
         num_outputs,
         layers,
-        nodes,
+        units,
         activation="relu",
         final_activation="linear",
     ):
         """
         Args:
             layers (int): Number of layers
-            nodes (int): Number of nodes per layer
+            units (int): Number of units per layer
             activation (str): Activation function between layers
             final_activation (str): Activation function for output layer
         """
         new_input_shape = get_input_size(input_shape, False, False)
         self._num_layers = layers
-        self._num_nodes = nodes
+        self._num_units = units
         self._activation = activation
         self._final_activation = final_activation
         super().__init__(new_input_shape, num_outputs)
@@ -556,7 +556,7 @@ class Dense(Model):
     def get_layers(self):
         layers = list()
         for i in range(self._num_layers - 1):
-            layers += [keras.layers.Dense(self._num_nodes, activation=self._activation)]
+            layers += [keras.layers.Dense(self._num_units, activation=self._activation)]
         layers += [
             keras.layers.Dense(self._num_outputs, activation=self._final_activation)
         ]

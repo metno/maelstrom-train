@@ -117,7 +117,7 @@ models:
     - type: Dense
       name: dense_l5_n5
       layers: 5
-      nodes: 5
+      units: 5
 output:
     quantiles: [0.5, 0.1, 0.9]
 loss:
