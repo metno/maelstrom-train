@@ -1088,16 +1088,24 @@ class FileLoader(DataLoader):
                 self.predictor_names_to_load + self.static_predictor_names_to_load
             )
             for f, feature in enumerate(self.extra_features):
+                # Normalization information. Some features will compute these (e.g. day of year)
+                curr_mean = None
+                curr_std = None
+                normal_is_computable = False  # Will be set to true, if any sample is suitable for
+                                              # computing the normal (e.g. an altitude variable)
+
                 feature_type = feature["type"]
                 curr = np.zeros(predictors.shape[0:-1], np.float32)
                 if feature_type == "altitude_diff":
                     I0 = predictor_names_loaded.index("altitude")
                     I1 = predictor_names_loaded.index("model_altitude")
                     curr = predictors[..., I1] - predictors[..., I0]
+                    normal_is_computable = True
                 elif feature_type == "laf_diff":
                     I0 = predictor_names_loaded.index("land_area_fraction")
                     I1 = predictor_names_loaded.index("model_laf")
                     curr = predictors[..., I1] - predictors[..., I0]
+                    normal_is_computable = True
                 elif feature_type in ["diff", "multiply"]:
 
                     def _get(predictors, predictor_names_loaded, arg):
@@ -1116,6 +1124,7 @@ class FileLoader(DataLoader):
                 elif feature_type == "leadtime":
                     for i in range(num_leadtimes):
                         curr[:, i, ...] = i
+                    normal_is_computable = True
                 elif feature_type in ["x", "y"]:
                     Y = curr.shape[2]
                     X = curr.shape[3]
@@ -1128,29 +1137,37 @@ class FileLoader(DataLoader):
                         curr = np.tile(
                             y[None, None, ...], [curr.shape[0], curr.shape[1], 1, 1]
                         )
+                    normal_is_computable = True
                 elif feature_type == "month_of_year":
                     assert curr.shape[0] == len(times)
                     for i in range(curr.shape[0]):
                         date, hour = maelstrom.util.unixtime_to_date(times[i])
                         month = date // 100 % 100
                         curr[i, ...] = month
+                    curr_mean = 6.5
+                    curr_std = 3
                 elif feature_type == "day_of_year":
                     assert curr.shape[0] == len(times)
                     for i in range(curr.shape[0]):
                         dt = datetime.datetime.utcfromtimestamp(int(times[i]))
                         day = int(dt.strftime("%j"))
                         curr[i, ...] = day
+                    curr_mean = 183
+                    curr_std = 36
                 elif feature_type == "hour_of_day":
                     for i in range(curr.shape[0]):
                         validtimes = times[0] + self.leadtimes
                         for lt in range(curr.shape[1]):
                             curr[i, lt, ...] = validtimes[lt] // 3600 % 24
+                    normal_is_computable = True
                 elif feature_type == "model_laf":
                     I = predictor_names_loaded.index("model_laf")
                     curr = predictors[..., I]
+                    normal_is_computable = True
                 else:
                     I = predictor_names_loaded.index(feature_type)
                     curr = predictors[..., I]
+                    normal_is_computable = True
 
                 if "tpi_halfwidth" in feature:
                     q = neighbourhood_static_field(
@@ -1170,6 +1187,32 @@ class FileLoader(DataLoader):
                     curr = np.cumsum(curr, axis=-1)
                     curr[..., w:] = curr[..., w:] - curr[..., 0:-w]
                 extra_values[..., f] = curr
+                if self.coefficients is not None:
+                    feature_name = self.get_feature_name(feature)
+                    if feature_name in self.coefficients:
+                        continue
+
+                    if "dont_normalize" in feature and feature["dont_normalize"]:
+                        continue
+
+                    # Add normalization information
+                    # 1) Use mean/std from coefficients
+                    # 2) mean/std from yaml
+                    # 3) Code above determines the normal should be computed on the fly
+                    # 4) Code above computes the mean/std
+                    if "mean" in feature and "std" in feature:
+                        curr_mean = feature["mean"]
+                        curr_std = feature["std"]
+                    elif normal_is_computable:
+                        curr_mean = np.mean(curr)
+                        curr_std = np.std(curr)
+
+                    if curr_mean is None or curr_std is None:
+                        # No recipe to compute it
+                        print(f"Warning: Cannot compute normalization information for extra_feature '{feature_name}'. Either add it to the job YAML or the normalization YAML.")
+                        continue
+
+                    self.coefficients[feature_name] = [curr_mean, curr_std]
 
             if self.predictor_indices_to_keep is not None:
                 predictors = predictors[..., self.predictor_indices_to_keep]
