@@ -251,7 +251,7 @@ class Convergence(keras.callbacks.Callback):
         if self.header is None:
             keys = list()
             for epoch, line in self.results:
-                print(epoch, line)
+                # print(epoch, line)
                 keys += line.keys()
             keys = list(set(keys))  # ["epoch"] + [k for k in line.keys()]
             self.header = keys
