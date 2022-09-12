@@ -881,7 +881,9 @@ class FileLoader(DataLoader):
             predictors = dict()
             for p in range(predictors0.shape[-1]):
                 name = ifile.variables["predictor"][p]
-                curr = predictors0[..., p]
+                # Do a copy here, because otherwise accessing the data will forever be slow
+                # from here.
+                curr = np.copy(predictors0[..., p])
                 curr = np.expand_dims(curr, 0)
                 predictors[name] = curr
             reshaping_predictors_time += time.time() - ss_time
@@ -918,7 +920,7 @@ class FileLoader(DataLoader):
                     static_predictors = np.tile(temp, [1, num_leadtimes, 1, 1, 1])
                     for p in range(static_predictors.shape[-1]):
                         name = ifile.variables["static_predictor"][p]
-                        predictors[name] = static_predictors[..., p]
+                        predictors[name] = np.copy(static_predictors[..., p])
                     ee_time = time.time()
                     reshaping_static_predictors_time += ee_time - ss_time
 
@@ -1291,7 +1293,7 @@ class FileLoader(DataLoader):
                 std = float(self.coefficients[name][1])
                 predictor[:] -= mean
                 predictor[:] /= std
-                print(name, time.time() - ss_time, predictor.shape, type(predictor), predictor.dtype)
+                # print(name, time.time() - ss_time, predictor.shape, type(predictor), predictor.dtype)
         e_time = time.time()
         print(e_time - s_time)
 
