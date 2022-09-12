@@ -318,7 +318,6 @@ class DataLoader:
             p, t = self.cache[f]
         else:
             # self.write_debug("Cache miss")
-            ss_time = time.time()
             predictors, targets = self.load_data(f)
             self.count_reads += 1
 
@@ -326,21 +325,27 @@ class DataLoader:
             times = [self.times[f]]
             predictors0, targets = self.process(predictors, targets, times)
 
-            # Convert predictors from a dictionary to a list of arrays
+            # Convert predictors from a dictionary to a list of arrays so that tensorflow can
+            # convert to tf tensor. It's much faster to concatenate along axis 0 and moving the
+            # axis. The moving part takes no time, since no data is moved, it's just numpy keeping
+            # track of the dimension. tf.convert_to_tensor does loses a little bit of time, but
+            # nowhere near as much as numpy does.
+            ss_time = time.time()
             keys = list(predictors0.keys())
             keys.sort()
             predictors = list()
+
             for name in keys:
-                predictors += [np.expand_dims(predictors0[name], 4)]
-            predictors = np.concatenate(predictors, axis=4)
+                predictors += [np.expand_dims(predictors0[name], 0)]
+            predictors = np.concatenate(predictors, axis=0)
+            predictors = np.moveaxis(predictors, 0, 4)
+            self.timing["merging_predictors"] = time.time() - ss_time
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
                 # self.write_debug("Clearing cache")
                 self.cache.clear()
 
             ss_time = time.time()
-            # p = tf.convert_to_tensor(predictors[[s], ...])
-            # t = tf.convert_to_tensor(targets[[s], ...])
             p = tf.convert_to_tensor(predictors)
             t = tf.convert_to_tensor(targets)
             self.timing["convert"] += time.time() - ss_time
@@ -358,20 +363,14 @@ class DataLoader:
 
     def patch(self, predictors, targets):
         """Reorganize predictors and targets into patches"""
+        # TODO: Implement patching here
         if self.patch_size is not None:
             s_time = time.time()
-            S, L, Y, X, P = predictors.shape
+            P = len(predictors)
+            S, L, Y, X = predictors[list(predictors.keys())[0]].shape
             assert self.num_patches_per_sample > 0
-            new_predictors = np.zeros(
-                [
-                    S * self.num_patches_per_sample,
-                    L,
-                    self.patch_size,
-                    self.patch_size,
-                    P,
-                ],
-                np.float32,
-            )
+
+            # Targets
             new_targets = np.zeros(
                 [
                     S * self.num_patches_per_sample,
@@ -389,7 +388,6 @@ class DataLoader:
                         Ix = slice(x * self.patch_size, (x + 1) * self.patch_size)
                         for y in range(self.num_y_patches_per_file):
                             Iy = slice(y * self.patch_size, (y + 1) * self.patch_size)
-                            new_predictors[count, ...] = predictors[s, :, Iy, Ix, :]
                             new_targets[count, ...] = targets[s, :, Iy, Ix, :]
                             count += 1
                 else:
@@ -400,9 +398,42 @@ class DataLoader:
                         yi = np.random.randint(0, full_num_y - self.patch_size)
                         Ix = slice(xi, xi + self.patch_size)
                         Iy = slice(yi, yi + self.patch_size)
-                        new_predictors[count, ...] = predictors[s, :, Iy, Ix, :]
                         new_targets[count, ...] = targets[s, :, Iy, Ix, :]
                         count += 1
+
+            # Predictors
+            new_predictors = dict()
+            for name, predictor in predictors.items():
+                ss_time = time.time()
+                new_predictor = np.zeros(
+                    [
+                        S * self.num_patches_per_sample,
+                        L,
+                        self.patch_size,
+                        self.patch_size,
+                    ],
+                    np.float32,
+                )
+                count = 0
+                for s in range(S):
+                    if self.num_random_patches is None:
+                        for x in range(self.num_x_patches_per_file):
+                            Ix = slice(x * self.patch_size, (x + 1) * self.patch_size)
+                            for y in range(self.num_y_patches_per_file):
+                                Iy = slice(y * self.patch_size, (y + 1) * self.patch_size)
+                                new_predictor[count, ...] = predictor[s, :, Iy, Ix]
+                                count += 1
+                    else:
+                        full_num_y = predictor.shape[2]
+                        full_num_x = predictor.shape[3]
+                        for x in range(self.num_random_patches):
+                            xi = np.random.randint(0, full_num_x - self.patch_size)
+                            yi = np.random.randint(0, full_num_y - self.patch_size)
+                            Ix = slice(xi, xi + self.patch_size)
+                            Iy = slice(yi, yi + self.patch_size)
+                            new_predictor[count, ...] = predictor[s, :, Iy, Ix]
+                            count += 1
+                new_predictors[name] = new_predictor
 
             e_time = time.time()
             self.timing["patching"] += e_time - s_time
@@ -1254,11 +1285,13 @@ class FileLoader(DataLoader):
             performance.
         """
         for name, predictor in predictors.items():
+            ss_time = time.time()
             if name in self.coefficients:
                 mean = float(self.coefficients[name][0])
                 std = float(self.coefficients[name][1])
                 predictor[:] -= mean
                 predictor[:] /= std
+                print(name, time.time() - ss_time, predictor.shape, type(predictor), predictor.dtype)
         e_time = time.time()
         print(e_time - s_time)
 
