@@ -1,6 +1,7 @@
 import calendar
 import datetime
 import numbers
+import numpy as np
 import os
 import resource
 
@@ -299,3 +300,19 @@ def get_common_indices(x, y):
             else:
                 Iy += [np.where(x[i] == y)[0][0]]
     return Ix, Iy
+
+class NoPool:
+    def __init__(self, num_processes=1):
+        self._processes = num_processes
+
+    def starmap(self, func, args):
+        results = list()
+        for i, arg in enumerate(args):
+            results += [func(*arg)]
+        return results
+
+    def close(self):
+        pass
+
+    def join(self):
+        pass

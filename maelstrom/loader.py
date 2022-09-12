@@ -3,7 +3,6 @@ import copy
 import datetime
 import glob
 import json
-import multiprocessing
 import numbers
 import os
 import re
@@ -325,7 +324,15 @@ class DataLoader:
 
             # Perform all processing steps here
             times = [self.times[f]]
-            predictors, targets = self.process(predictors, targets, times)
+            predictors0, targets = self.process(predictors, targets, times)
+
+            # Convert predictors from a dictionary to a list of arrays
+            keys = list(predictors0.keys())
+            keys.sort()
+            predictors = list()
+            for name in keys:
+                predictors += [np.expand_dims(predictors0[name], 4)]
+            predictors = np.concatenate(predictors, axis=4)
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
                 # self.write_debug("Clearing cache")
@@ -410,17 +417,8 @@ class DataLoader:
         This can be for example, normalizing data, feature extraction, augmentation, etc.  Subclases
         can override this
         """
-        # print("#1", predictors.shape)
-        # print("Before")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
         predictors, targets = self._process(predictors, targets, times)
-        # print("#2", predictors.shape)
         predictors, targets = self.patch(predictors, targets)
-        # print("After")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        # sys.exit()
 
         return predictors, targets
 
@@ -686,35 +684,27 @@ class FileLoader(DataLoader):
             leadtimes = limit_leadtimes_seconds
 
         # What indicies in the predictor variable should be loaded?
-        self.predictor_indices_to_load = None
-        self.static_predictor_indices_to_load = None
-
-        # What indices in the predictor variable will be kept at the end?
-        self.predictor_indices_to_keep = None
-        self.static_predictor_indices_to_keep = None
+        self.predictors_to_load = None
+        self.static_predictors_to_load = None
 
         # What predictor names will be loaded?
         self.predictor_names_to_load = list()
         self.static_predictor_names_to_load = list()
         if limit_predictors is not None:
-            self.predictor_indices_to_load = list()
-            self.static_predictor_indices_to_load = list()
-
-            self.predictor_indices_to_keep = list()
+            self.predictors_to_load = list()
+            self.static_predictors_to_load = list()
 
             predictor_names_orig = [i for i in predictor_names]
             static_predictor_names_orig = [i for i in static_predictor_names]
             predictor_names = list()
             static_predictor_names = list()
-            for i in limit_predictors:
-                if i in predictor_names_orig:
-                    self.predictor_indices_to_load += [predictor_names_orig.index(i)]
-                    predictor_names += [i]
-                elif i in static_predictor_names_orig:
-                    self.static_predictor_indices_to_load += [
-                        static_predictor_names_orig.index(i)
-                    ]
-                    static_predictor_names += [i]
+            for name in limit_predictors:
+                if name in predictor_names_orig:
+                    self.predictors_to_load += [name]
+                    predictor_names += [name]
+                elif name in static_predictor_names_orig:
+                    self.static_predictors_to_load += [name]
+                    static_predictor_names += [name]
                 else:
                     raise ValueError(
                         f"Predictor {i} does not exist in dataset and is not a diagnosable feature"
@@ -724,48 +714,25 @@ class FileLoader(DataLoader):
                 required_predictors = self.get_required_predictors(feature)
                 for required_predictor in required_predictors:
                     if required_predictor in predictor_names_orig:
-                        self.predictor_indices_to_load += [
-                            predictor_names_orig.index(required_predictor)
-                        ]
+                        self.predictor_indices_to_load += [required_predictor]
                     elif required_predictor in static_predictor_names_orig:
-                        self.static_predictor_indices_to_load += [
-                            static_predictor_names_orig.index(required_predictor)
-                        ]
+                        self.static_predictor_indices_to_load += [required_predictor]
                     else:
                         raise ValueError(
                             f"Predictor {required_predictor} does not exist in dataset"
                         )
 
-            self.predictor_indices_to_load = list(set(self.predictor_indices_to_load))
-            self.predictor_indices_to_load.sort()
-            self.static_predictor_indices_to_load = list(
-                set(self.static_predictor_indices_to_load)
+            self.predictors_to_load = list(set(self.predictors_to_load))
+            self.predictors_to_load.sort()
+            self.static_predictors_to_load = list(
+                set(self.static_predictors_to_load)
             )
-            self.static_predictor_indices_to_load.sort()
-
-            for i in range(len(self.predictor_indices_to_load)):
-                index = self.predictor_indices_to_load[i]
-                self.predictor_names_to_load += [predictor_names_orig[index]]
-
-            for i in range(len(self.static_predictor_indices_to_load)):
-                index = self.static_predictor_indices_to_load[i]
-                self.static_predictor_names_to_load += [
-                    static_predictor_names_orig[index]
-                ]
-
-            for predictor in predictor_names:
-                index = self.predictor_names_to_load.index(predictor)
-                self.predictor_indices_to_keep += [index]
-
-            for predictor in static_predictor_names:
-                offset = len(self.predictor_names_to_load)
-                index = self.static_predictor_names_to_load.index(predictor) + offset
-                self.predictor_indices_to_keep += [index]
+            self.static_predictors_to_load.sort()
         else:
-            for i in predictor_names:
-                self.predictor_names_to_load += [i]
-            for i in static_predictor_names:
-                self.static_predictor_names_to_load += [i]
+            for name in predictor_names:
+                self.predictor_names_to_load += [name]
+            for name in static_predictor_names:
+                self.static_predictor_names_to_load += [name]
 
         all_predictor_names = predictor_names + static_predictor_names
         all_predictor_names += [
@@ -799,6 +766,7 @@ class FileLoader(DataLoader):
 
         reading_time = 0
         reshaping_static_predictors_time = 0
+        reshaping_predictors_time = 0
         with netCDF4.Dataset(filename, "r") as ifile:
 
             def get(
@@ -817,15 +785,14 @@ class FileLoader(DataLoader):
                 ):
                     output = var[:]
                 else:
-                    has_sample = "sample" in var.dimensions
                     has_leadtime = "leadtime" in var.dimensions
                     if x_range is None:
-                        x_range = slice(var.shape[has_sample + has_leadtime + 1])
+                        x_range = slice(var.shape[has_leadtime + 1])
                     if y_range is None:
-                        y_range = slice(var.shape[has_sample + has_leadtime])
+                        y_range = slice(var.shape[has_leadtime])
                     if has_leadtime:
                         if leadtime_indices is None:
-                            leadtime_indices = slice(var.shape[has_sample])
+                            leadtime_indices = slice(var.shape[0])
                         if "predictor" in var.dimensions:
                             if predictor_indices is None:
                                 predictor_indices = slice(var.shape[-1])
@@ -865,52 +832,62 @@ class FileLoader(DataLoader):
                 return output.filled(np.nan)
 
             ss_time = time.time()
-            predictors = get(
+            all_predictor_names = [p for p in ifile.variables["predictor"][:]]
+            predictor_indices = [all_predictor_names.index(p) for p in self.predictor_names_to_load]
+            predictor_indices.sort()
+            if predictor_indices == range(len(all_predictor_names)):
+                predictor_indices = None
+
+            predictors0 = get(
                 ifile.variables["predictors"],
                 self.leadtime_indices,
-                self.predictor_indices_to_load,
+                predictor_indices,
                 self.x_range,
                 self.y_range,
             )
             reading_time += time.time() - ss_time
+            ss_time = time.time()
+            predictors = dict()
+            for p in range(predictors0.shape[-1]):
+                name = ifile.variables["predictor"][p]
+                curr = predictors0[..., p]
+                curr = np.expand_dims(curr, 0)
+                predictors[name] = curr
+            reshaping_predictors_time += time.time() - ss_time
+
             if "static_predictors" in ifile.variables:
                 if (
-                    self.static_predictor_indices_to_load is None
-                    or len(self.static_predictor_indices_to_load) > 0
+                    self.static_predictors_to_load is None
+                    or len(self.static_predictors_to_load) > 0
                 ):
+                    all_predictor_names = [p for p in ifile.variables["static_predictor"][:]]
+                    predictor_indices = None
+                    if self.static_predictors_to_load is not None:
+                        predictor_indices = [all_predictor_names.index(p) for p in self.static_predictors_to_load]
+                        predictor_indices.sort()
+                        if predictor_indices == range(len(all_predictor_names)):
+                            predictor_indices = None
                     ss_time = time.time()
                     temp = get(
                         # TODO: Leadtime indices
                         ifile.variables["static_predictors"],
                         None,
-                        self.static_predictor_indices_to_load,
+                        predictor_indices,
                         self.x_range,
                         self.y_range,
                     )
                     reading_time += time.time() - ss_time
 
-                    ss_time = time.time()
-
                     # Add leadtime dimension to static_predictors
-                    has_sample = (
-                        "sample" in ifile.variables["static_predictors"].dimensions
-                    )
-                    if has_sample:
-                        # Add leadtime dimension after sample dimension
-                        new_shape = (
-                            (temp.shape[0],) + (predictors.shape[1],) + temp.shape[1:]
-                        )
-                        static_predictors = np.zeros(new_shape, np.float32)
-                        for i in range(new_shape[1]):
-                            static_predictors[:, i, ...] = temp
-                    else:
-                        new_shape = (predictors.shape[0],) + temp.shape
-                        static_predictors = np.zeros(new_shape, np.float32)
-                        for i in range(new_shape[0]):
-                            static_predictors[i, ...] = temp
-                    predictors = np.concatenate(
-                        (predictors, static_predictors), axis=-1
-                    )
+                    ss_time = time.time()
+                    new_shape = (predictors0.shape[0],) + temp.shape
+                    num_leadtimes = predictors0.shape[0]
+                    temp = np.expand_dims(temp, 0) # Add leadtime dimension
+                    temp = np.expand_dims(temp, 0) # Add sample dimension
+                    static_predictors = np.tile(temp, [1, num_leadtimes, 1, 1, 1])
+                    for p in range(static_predictors.shape[-1]):
+                        name = ifile.variables["static_predictor"][p]
+                        predictors[name] = static_predictors[..., p]
                     ee_time = time.time()
                     reshaping_static_predictors_time += ee_time - ss_time
 
@@ -940,12 +917,11 @@ class FileLoader(DataLoader):
                 std = np.expand_dims(std, -1)
                 targets = np.concatenate((targets, std), axis=-1)
 
-            if "sample" not in ifile.dimensions:
-                predictors = np.expand_dims(predictors, 0)
-                targets = np.expand_dims(targets, 0)
+            targets = np.expand_dims(targets, 0)
             # self.write_debug("time: %.1f s" % (time.time() - s_time))
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
+            self.timing["reshaping_predictors"] += reshaping_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
             return predictors, targets
 
@@ -963,8 +939,6 @@ class FileLoader(DataLoader):
                 static_predictor_names = [i for i in static_predictor_names]
 
             num_samples_per_file = 1
-            if "sample" in ifile.dimensions:
-                num_samples_per_file = len(ifile.dimensions["sample"])
             num_x = len(ifile.dimensions["x"])
             num_y = len(ifile.dimensions["y"])
 
@@ -1068,6 +1042,7 @@ class FileLoader(DataLoader):
             return [feature_type]
 
     def compute_extra_features(self, predictors, times):
+        assert isinstance(predictors, dict)
         def neighbourhood_static_field(ar, half_width, operator=gridpp.Mean):
             assert len(ar.shape) == 4
             q = ar[0, 0, ...]
@@ -1079,15 +1054,17 @@ class FileLoader(DataLoader):
             return out
 
         # Add new features
+        predictors_shape = predictors[list(predictors.keys())[0]].shape
         if len(self.extra_features) > 0:
-            num_leadtimes = predictors.shape[1]
-            extra_values = np.zeros(
-                predictors.shape[0:-1] + (len(self.extra_features),), np.float32
-            )
+            num_leadtimes = predictors_shape[1]
             predictor_names_loaded = (
                 self.predictor_names_to_load + self.static_predictor_names_to_load
             )
             for f, feature in enumerate(self.extra_features):
+                feature_name = self.get_feature_name(feature)
+                if feature_name not in self.predictor_names:
+                    continue
+
                 # Normalization information. Some features will compute these (e.g. day of year)
                 curr_mean = None
                 curr_std = None
@@ -1095,28 +1072,23 @@ class FileLoader(DataLoader):
                                               # computing the normal (e.g. an altitude variable)
 
                 feature_type = feature["type"]
-                curr = np.zeros(predictors.shape[0:-1], np.float32)
+                curr = np.zeros(predictors_shape, np.float32)
                 if feature_type == "altitude_diff":
-                    I0 = predictor_names_loaded.index("altitude")
-                    I1 = predictor_names_loaded.index("model_altitude")
-                    curr = predictors[..., I1] - predictors[..., I0]
+                    curr = predictors["model_altitude"] - predictors["altitude"]
                     normal_is_computable = True
                 elif feature_type == "laf_diff":
-                    I0 = predictor_names_loaded.index("land_area_fraction")
-                    I1 = predictor_names_loaded.index("model_laf")
-                    curr = predictors[..., I1] - predictors[..., I0]
+                    curr = predictors["model_laf"] - predictors["land_area_fraction"]
                     normal_is_computable = True
                 elif feature_type in ["diff", "multiply"]:
 
-                    def _get(predictors, predictor_names_loaded, arg):
+                    def _get(predictors, arg):
                         if isinstance(arg, numbers.Number):
                             return arg
                         else:
-                            I = predictor_names_loaded.index(arg)
-                            return predictors[..., I]
+                            return predictors[arg]
 
-                    right = _get(predictors, predictor_names_loaded, feature["right"])
-                    left = _get(predictors, predictor_names_loaded, feature["left"])
+                    right = _get(predictors, feature["right"])
+                    left = _get(predictors, feature["left"])
                     if feature_type == "diff":
                         curr = left - right
                     elif feature_type == "multiply":
@@ -1126,9 +1098,11 @@ class FileLoader(DataLoader):
                         curr[:, i, ...] = i
                     normal_is_computable = True
                 elif feature_type in ["x", "y"]:
-                    Y = curr.shape[2]
-                    X = curr.shape[3]
+                    Y = curr.shape[-2]
+                    X = curr.shape[-1]
                     x, y = np.meshgrid(range(X), range(Y))
+                    x = x.astype(np.float32)
+                    y = y.astype(np.float32)
                     if feature_type == "x":
                         curr = np.tile(
                             x[None, None, ...], [curr.shape[0], curr.shape[1], 1, 1]
@@ -1161,12 +1135,10 @@ class FileLoader(DataLoader):
                             curr[i, lt, ...] = validtimes[lt] // 3600 % 24
                     normal_is_computable = True
                 elif feature_type == "model_laf":
-                    I = predictor_names_loaded.index("model_laf")
-                    curr = predictors[..., I]
+                    curr = predictors["model_laf"]
                     normal_is_computable = True
                 else:
-                    I = predictor_names_loaded.index(feature_type)
-                    curr = predictors[..., I]
+                    curr = predictors[feature_type]
                     normal_is_computable = True
 
                 if "tpi_halfwidth" in feature:
@@ -1186,9 +1158,9 @@ class FileLoader(DataLoader):
                     w = feature["time_window"]
                     curr = np.cumsum(curr, axis=-1)
                     curr[..., w:] = curr[..., w:] - curr[..., 0:-w]
-                extra_values[..., f] = curr
+                predictors[feature_name] = curr
+
                 if self.coefficients is not None:
-                    feature_name = self.get_feature_name(feature)
                     if feature_name in self.coefficients:
                         continue
 
@@ -1214,13 +1186,12 @@ class FileLoader(DataLoader):
 
                     self.coefficients[feature_name] = [curr_mean, curr_std]
 
-            if self.predictor_indices_to_keep is not None:
-                predictors = predictors[..., self.predictor_indices_to_keep]
-            predictors = np.concatenate((predictors, extra_values), axis=-1)
         return predictors
 
     def _process(self, predictors, targets, times):
         """This function needs to know what predictors to keep"""
+
+        assert isinstance(predictors, dict)
 
         ss_time = time.time()
         predictors = self.compute_extra_features(predictors, times)
@@ -1228,11 +1199,10 @@ class FileLoader(DataLoader):
 
         if self.predict_diff:
             ss_time = time.time()
-            Ip = self.predictor_names.index("air_temperature_2m")
 
             # Code for target dimension:
             # The first target (target_mean) is also adjusted
-            targets[..., 0] = targets[..., 0] - predictors[..., Ip]
+            targets[..., 0] = targets[..., 0] - predictors["air_temperature_2m"]
 
             # Code for without a target dimension:
             # targets = predictors[..., Ip] - targets
@@ -1242,7 +1212,7 @@ class FileLoader(DataLoader):
         # difference (unless targets are also normalized using the same normalization as for the
         # Ip predictor)
         ss_time = time.time()
-        self.normalize(predictors, self.predictor_names)
+        self.normalize(predictors)
         self.timing["normalization"] += time.time() - ss_time
 
         return predictors, targets
@@ -1270,9 +1240,10 @@ class FileLoader(DataLoader):
             self.coefficients[self.predictor_names[k]] = [curr_mean, curr_std]
             print(name, self.coefficients[self.predictor_names[k]])
 
-    def normalize(self, predictors, names):
+    def normalize(self, predictors):
         s_time = time.time()
-        assert predictors.shape[-1] == len(names)
+        # assert predictors.shape[-1] == len(names)
+        assert isinstance(predictors, dict)
 
         if self.coefficients is None:
             return
@@ -1282,40 +1253,14 @@ class FileLoader(DataLoader):
             separately for each sample and leadtime, as this saves memory but doesn't hurt
             performance.
         """
-        if 1:
-            P = predictors.shape[-1]
-            cache_key = tuple(names)
-            if cache_key in self.norm_cache:
-                means, stds = self.norm_cache[cache_key]
-            else:
-                means = np.zeros(P)
-                stds = np.ones(P)
-                for p, name in enumerate(names):
-                    if name in self.coefficients:
-                        means[p] = self.coefficients[name][0]
-                        stds[p] = self.coefficients[name][1]
-                means = np.tile(means, list(predictors.shape[2:-1]) + [1])
-                stds = np.tile(stds, list(predictors.shape[2:-1]) + [1])
-                self.norm_cache.clear()
-                self.norm_cache[cache_key] = means, stds
-
-            for s in range(predictors.shape[0]):
-                for t in range(predictors.shape[1]):
-                    predictors[s, t, ...] -= means
-                    predictors[s, t, ...] /= stds
-
-        else:
-            """ Old implementation. Much slower. """
-            for p in range(predictors.shape[-1]):
-                name = names[p]
-                if name not in self.coefficients:
-                    continue
-                mean = self.coefficients[name][0]
-                std = self.coefficients[name][1]
-                predictors[..., p] -= mean
-                predictors[..., p] /= std
+        for name, predictor in predictors.items():
+            if name in self.coefficients:
+                mean = float(self.coefficients[name][0])
+                std = float(self.coefficients[name][1])
+                predictor[:] -= mean
+                predictor[:] /= std
         e_time = time.time()
-        # print(e_time - s_time)
+        print(e_time - s_time)
 
     def denormalize(self, predictors, names):
         if self.coefficients is None:
@@ -1465,3 +1410,12 @@ class Cache:
     @property
     def get_memory_cache_size(self):
         return get_size(self.memory_cache)
+
+def func(predictors, means, stds):
+    for p in range(predictors.shape[-1]):
+        predictors[..., p] -= means[p]
+        predictors[..., p] /= stds[p]
+    return predictors
+
+def func2(self, predictors, targets, times):
+    return self._process(predictors, targets, times)
