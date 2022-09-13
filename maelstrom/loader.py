@@ -427,11 +427,15 @@ class DataLoader:
     def _process(self, predictors, targets, times):
         return predictors, targets
 
-    def get_dataset(self, randomize_order=False):
+    def get_dataset(self, randomize_order=False, shard_size=None, shard_index=None):
         """Returns a tensorflow dataset that reads data in parallel
 
         Args:
             randomize_order (bool): Randomize which files are read
+            shard_size (int): Create equally sized shards of this size
+            shard_index (int): Which index to return?
+                Sharding is useful when running with horovod and you need to split the dataset
+                into smaller datasets
 
         Returns:
             tf.data.Dataset: Tensorflow dataset
@@ -443,7 +447,13 @@ class DataLoader:
             z = np.argsort(np.random.rand(self.num_files)).tolist()
         else:
             z = list(range(self.num_files))
-        dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
+
+        if shard_size is not None and shard_index is not None:
+            if shard_size <= shard_index:
+                raise ValueError(f"shard_index ({shard_index}) must be less than shard_size ({shard_size})")
+            dataset = tf.data.Dataset.from_generator(lambda: z[shard_index::shard_size], tf.uint32)
+        else:
+            dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
 
         def getitem(idx):
             # A tensor is passed in, so decode it here
