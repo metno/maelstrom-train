@@ -1,3 +1,4 @@
+# Extra predictors and leadtime predictor
 training:
     trainer:
         type: keras
@@ -13,7 +14,7 @@ loader:
     type: file
     filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20210[12]*T*Z.nc"]
 
-    # normalization: "data/air_temperature/normalization.yml"
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 2
     patch_size: 256
@@ -22,6 +23,12 @@ loader:
     prefetch: 1
     num_parallel_calls: 1
     debug: True
+    extra_features:
+        - type: x
+        - type: y
+        - type: leadtime
+        - type: month_of_year
+        - type: hour_of_day
 loader_validation:
     type: file
     # 24 validation dates, mixing the different months and init times
@@ -50,8 +57,7 @@ loader_validation:
                 "data/air_temperature/5TB/20210202T*Z.nc",
                 "data/air_temperature/5TB/20210216T*Z.nc"
     ]
-    # Normalization takes 32 seconds
-    # normalization: "data/air_temperature/normalization.yml"
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 200
     x_range: 300:1068
@@ -62,11 +68,18 @@ loader_validation:
     prefetch: 1
     num_parallel_calls: 1
     debug: True
+    extra_features:
+        - type: x
+        - type: y
+        - type: leadtime
+        - type: month_of_year
+        - type: hour_of_day
 loader_test:
     type: file
     filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
                 "data/air_temperature/5TB/20211*T*Z.nc",
                 "data/air_temperature/5TB/2022*T*Z.nc"]
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 0
     patch_size: 256
@@ -75,6 +88,12 @@ loader_test:
     prefetch: 1
     num_parallel_calls: 1
     debug: True
+    extra_features:
+        - type: x
+        - type: y
+        - type: leadtime
+        - type: month_of_year
+        - type: hour_of_day
 models:
     - type: BasicBenchmark
       name: cnn
@@ -212,6 +231,10 @@ models:
               type: dense
               units: 5
               activation: "relu"
+    - type: Dense
+      name: dense_l5_n5
+      layers: 5
+      units: 5
 output:
     quantiles: [0.5, 0.1, 0.9]
 loss:

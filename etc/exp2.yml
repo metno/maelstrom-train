@@ -1,4 +1,4 @@
-# Testing leadtime dependence
+# Testing leadtime dependence and normalization
 training:
     trainer:
         type: keras
@@ -14,7 +14,7 @@ loader:
     type: file
     filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20210[12]*T*Z.nc"]
 
-    # normalization: "data/air_temperature/normalization.yml"
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 2
     patch_size: 256
@@ -53,8 +53,7 @@ loader_validation:
                 "data/air_temperature/5TB/20210202T*Z.nc",
                 "data/air_temperature/5TB/20210216T*Z.nc"
     ]
-    # Normalization takes 32 seconds
-    # normalization: "data/air_temperature/normalization.yml"
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 200
     x_range: 300:1068
@@ -65,7 +64,6 @@ loader_validation:
     prefetch: 1
     num_parallel_calls: 1
     debug: True
-    # Each feature takes 6.7 seconds
     extra_features:
         - type: leadtime
 loader_test:
@@ -73,6 +71,7 @@ loader_test:
     filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
                 "data/air_temperature/5TB/20211*T*Z.nc",
                 "data/air_temperature/5TB/2022*T*Z.nc"]
+    normalization: "data/air_temperature/normalization.yml"
     quick_metadata: True
     cache_size: 0
     patch_size: 256
@@ -122,6 +121,104 @@ models:
     - type: Unet
       name: unet_lt
       with_leadtime: True
+    - type: Custom
+      name: cnn_custom
+      final_activation: linear
+      layers:
+        - type: conv3d
+          filters: 12
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+    - type: Custom
+      name: cnn_custom_lt
+      final_activation: linear
+      layers:
+        - type: conv3d
+          filters: 12
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: dense
+          units: 12
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: dense
+          units: 5
+          activation: "relu"
+        - type: conv3d
+          filters: 5
+          kernel_size: [1, 3, 3]
+          padding: same
+          activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
+        - type: leadtimelayer
+          layer:
+              type: dense
+              units: 5
+              activation: "relu"
     - type: Dense
       name: dense_l5_n5
       layers: 5
