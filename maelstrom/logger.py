@@ -48,4 +48,5 @@ class Logger:
         maelstrom.util.create_directory(self.filename)
         with open(self.filename, "w") as file:
             output = self.__str__()
+            print(output)
             file.write(output)

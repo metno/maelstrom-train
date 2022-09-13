@@ -957,6 +957,7 @@ class FileLoader(DataLoader):
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
+            print(self.timing)
             return predictors, targets
 
     def load_metadata(self, filenames):

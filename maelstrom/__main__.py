@@ -15,7 +15,7 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow import keras
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
+# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
 # os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
 
@@ -56,7 +56,7 @@ def main():
         import horovod.tensorflow as hvd
 
         hvd.init()
-        main_process = hvd.rank() == 0
+        main_process = hvd.local_rank() == 0
         multigpu = True
 
         gpus = tf.config.experimental.list_physical_devices("GPU")
@@ -68,6 +68,7 @@ def main():
             tf.config.experimental.set_visible_devices(
                 gpus[hvd.local_rank()], "GPU"
             )
+        print("Current rank", hvd.local_rank())
     elif args.hardware == "gpu":
         gpus = tf.config.experimental.list_physical_devices("GPU")
         print("Num GPUs Available: ", len(gpus))
@@ -116,7 +117,14 @@ def main():
     # Model training
     epochs = config["training"]["num_epochs"]
 
-    dataset = loader.get_dataset(True)
+    if multigpu:
+        # print("SHARDING", hvd.size(), hvd.local_rank())
+        # dataset = dataset.shard(num_shards=hvd.size(), index=hvd.local_rank())
+        # print(type(dataset))
+        dataset = loader.get_dataset(True, hvd.size(), hvd.local_rank())
+    else:
+        dataset = loader.get_dataset(True)
+
 
     do_validation = loader_val is not None and loader_val != loader
     dataset_val = dataset
@@ -172,26 +180,28 @@ def main():
         if main_process:
             print(model.summary())
 
-        config_logger = maelstrom.logger.Logger(f"{output_folder}/config.yml")
-        config_logger.add(None, config)
-        config_logger.write()
+            config_logger = maelstrom.logger.Logger(f"{output_folder}/config.yml")
+            config_logger.add(None, config)
+            config_logger.write()
 
-        logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
+            logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
+
         model_description = model.description()
         model_description.update(model_config["settings"])
         num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))
         num_non_trainable_weights = int(np.sum([K.count_params(w) for w in model.non_trainable_weights]))
         model_description["Num traininable parameters"] = num_trainable_weights
         model_description["Num non-trainable parameters"] = num_non_trainable_weights
-        logger.add("Model", model_description)
-        logger.add("Dataset", loader.description())
-        logger.add("Timing", "Start time", int(start_time))
-        # logger.add("Scores")
-        for section in config.keys():
-            if section not in ["models"]:
-                logger.add("Config", section.capitalize(), config[section])
+        if main_process:
+            logger.add("Model", model_description)
+            logger.add("Dataset", loader.description())
+            logger.add("Timing", "Start time", int(start_time))
+            # logger.add("Scores")
+            for section in config.keys():
+                if section not in ["models"]:
+                    logger.add("Config", section.capitalize(), config[section])
 
-        timing_callback = maelstrom.callback.Timing(logger)
+            timing_callback = maelstrom.callback.Timing(logger)
         callbacks = list()
         if args.do_train:
             if multigpu:
@@ -228,7 +238,7 @@ def main():
                         )
 
                 checkpoint_metric = 'loss'
-                if do_validation:
+                if do_validation and main_process:
                     callbacks += [
                         maelstrom.callback.Validation(
                             f"{output_folder}/{model_name}_val.txt",
@@ -243,20 +253,21 @@ def main():
                 # Note that the ModelCheckpoint callback must be added after the validation
                 # callback, otherwise val_loss will not be recorded when the checkpoint callback is
                 # run.
-                checkpoint_filepath = f"{output_folder}/checkpoint"
-                checkpoint_frequency = "epoch"
-                if validation_frequency is not None:
-                    checkpoint_frequency = validation_frequency
-                model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                    filepath=checkpoint_filepath,
-                    save_weights_only=True,
-                    save_freq=checkpoint_frequency,
-                    monitor=checkpoint_metric,
-                    verbose=1,
-                    mode='min',
-                    save_best_only=True
-                )
-                callbacks += [model_checkpoint_callback]
+                if main_process:
+                    checkpoint_filepath = f"{output_folder}/checkpoint"
+                    checkpoint_frequency = "epoch"
+                    if validation_frequency is not None:
+                        checkpoint_frequency = validation_frequency
+                    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+                        filepath=checkpoint_filepath,
+                        save_weights_only=True,
+                        save_freq=checkpoint_frequency,
+                        monitor=checkpoint_metric,
+                        verbose=1,
+                        mode='min',
+                        save_best_only=True
+                    )
+                    callbacks += [model_checkpoint_callback]
                 if num_trainable_weights < 1e5:
                     callbacks += [
                         maelstrom.callback.WeightsCallback(
@@ -282,7 +293,8 @@ def main():
             kwargs = {}
         # kwargs["verbose"] = main_process
 
-        logger.add("Timing", "Training", "Start_time", int(time.time()))
+        if main_process:
+            logger.add("Timing", "Training", "Start_time", int(time.time()))
         curr_args = {k: v for k, v in config["training"]["trainer"].items()}
         curr_args["model"] = model
         curr_args["optimizer"] = optimizer
