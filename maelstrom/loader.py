@@ -336,9 +336,9 @@ class DataLoader:
             predictors = list()
 
             for name in keys:
-                predictors += [np.expand_dims(predictors0[name], 0)]
-            predictors = np.concatenate(predictors, axis=0)
-            predictors = np.moveaxis(predictors, 0, 4)
+                predictors += [np.expand_dims(predictors0[name], 4)]
+            predictors = np.concatenate(predictors, axis=4)
+            # predictors = np.moveaxis(predictors, 0, 4)
             self.timing["merging_predictors"] = time.time() - ss_time
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
