@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import time
+import xarray as xr
 
 import gridpp
 import netCDF4
@@ -426,6 +427,34 @@ class DataLoader:
 
     def _process(self, predictors, targets, times):
         return predictors, targets
+
+    def get_xarray(self):
+        """Create xarray dataset.
+
+        Should only be used with datasets that fit in memory, since all data is loaded at once.
+
+        Returns:
+            xarray.Dataset: xarray dataset with predictors and targets
+        """
+        dataset = None
+        for i in range(len(self)):
+            predictors, targets = self[i]
+            samples_per_time = predictors.shape[0]
+            if dataset is None:
+                data_vars = dict()
+                shape = [len(self) * samples_per_time] + list(predictors.shape[1:])
+                data_vars["predictors"] = (["time", "leadtime", "y", "x", "predictor"], np.zeros(shape, np.float32), {})
+                shape = [len(self) * samples_per_time] + list(targets.shape[1:])
+                data_vars["targets"] = (["time", "leadtime", "y", "x", "target"], np.zeros(shape, np.float32), {})
+                dataset = xr.Dataset(data_vars)
+            dataset["predictors"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = predictors
+            dataset["targets"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = targets
+        dataset["predictor"] = self.predictor_names
+        dataset["time"] = self.times
+        dataset["leadtime"] = self.leadtimes
+        dataset["longitudes"] = (["y", "x"], self.grid.get_lons(), {"units": "degree"})
+        dataset["latitudes"] = (["y", "x"], self.grid.get_lats(), {"units": "degree"})
+        return dataset
 
     def get_dataset(self, randomize_order=False, shard_size=None, shard_index=None):
         """Returns a tensorflow dataset that reads data in parallel
@@ -957,7 +986,6 @@ class FileLoader(DataLoader):
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
-            print(self.timing)
             return predictors, targets
 
     def load_metadata(self, filenames):

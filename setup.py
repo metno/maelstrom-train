@@ -45,6 +45,7 @@ setuptools.setup(
         "six",
         "tensorflow",
         "tqdm",
+        "xarray",
     ],
     extras_require={
         "test": ["coverage", "pep8"],
