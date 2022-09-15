@@ -433,8 +433,11 @@ class DataLoader:
 
         Should only be used with datasets that fit in memory, since all data is loaded at once.
 
+        Note: If the loader creates patched data, then latitude and longitude will not be added to
+        output dataset.
+
         Returns:
-            xarray.Dataset: xarray dataset with predictors and targets
+            xarray.Dataset: xarray dataset with predictors, targets, and metadata
         """
         dataset = None
         for i in range(len(self)):
@@ -450,10 +453,11 @@ class DataLoader:
             dataset["predictors"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = predictors
             dataset["targets"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = targets
         dataset["predictor"] = self.predictor_names
-        dataset["time"] = self.times
+        dataset["time"] = np.repeat(self.times, samples_per_time)
         dataset["leadtime"] = self.leadtimes
-        dataset["longitudes"] = (["y", "x"], self.grid.get_lons(), {"units": "degree"})
-        dataset["latitudes"] = (["y", "x"], self.grid.get_lats(), {"units": "degree"})
+        if samples_per_time == 1:
+            dataset["longitudes"] = (["y", "x"], self.grid.get_lons(), {"units": "degree"})
+            dataset["latitudes"] = (["y", "x"], self.grid.get_lats(), {"units": "degree"})
         return dataset
 
     def get_dataset(self, randomize_order=False, shard_size=None, shard_index=None):
