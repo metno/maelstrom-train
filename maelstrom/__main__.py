@@ -9,6 +9,7 @@ import time
 
 import numpy as np
 import tqdm
+import wandb
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
@@ -79,6 +80,13 @@ def main():
         raise ValueError(f"Unknown hardware {args.hardware}")
 
     config = maelstrom.merge_configs(args.config)
+
+    do_wandb = False
+    if "wandb" in config:
+        do_wandb = True
+        wandb.init(**config["wandb"])
+
+    wandb.config = config
 
     loader, loader_val, loader_test = get_loaders(config)
 

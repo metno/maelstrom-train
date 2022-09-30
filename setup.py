@@ -45,6 +45,7 @@ setuptools.setup(
         "six",
         "tensorflow",
         "tqdm",
+        "wandb",
         "xarray",
     ],
     extras_require={
