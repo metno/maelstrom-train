@@ -19,7 +19,20 @@ import maelstrom
 """
 
 
-class WeightsCallback(keras.callbacks.Callback):
+def get(logger=None, model=None, filename=None, **args):
+    callback_type = args["type"].lower()
+    remaining_args = {k:v for k,v in args.items() if k not in ["type"]}
+    if callback_type == "verbose":
+        return Verbose(**remaining_args)
+    elif callback_type == "timing":
+        return Timing(logger)
+    elif callback_type == "weights":
+        return Weights(model, filename)
+    else:
+        raise NotImplementedError(f"Unknown callback type {callback_type}")
+
+
+class Weights(keras.callbacks.Callback):
     """Writes parameter weights and metrics to netCDF file. The callback records values as training
     progresses and writes the file when training is finished
     """
@@ -111,7 +124,7 @@ class WeightsCallback(keras.callbacks.Callback):
 
     def write(self, filename):
         weights = np.array(self.batch_weights)
-        if 0 in weights.shape:
+        if weights.shape or len(weights.shape) < 2:
             print(
                 f"Not writing weights file {filename} since there are no training parameters"
             )
@@ -181,7 +194,7 @@ class Timing(keras.callbacks.Callback):
         return self.results
 
 
-class Convergence(keras.callbacks.Callback):
+class Loss(keras.callbacks.Callback):
     """Write (training and test) loss information to text file
 
     Deprecated. Use Validation instead
@@ -190,7 +203,7 @@ class Convergence(keras.callbacks.Callback):
     def __init__(
         self,
         filename,
-        verif_style=False,
+        verif_style=True,
         flush_each_epoch=True,
         include_batch_logs=False,
         leadtime_is_batch=False,
@@ -481,6 +494,7 @@ class Validation(keras.callbacks.Callback):
                 self.logger.add("Scores", k, v)
 
 
+# TODO: Probably get rid of this
 class Testing(keras.callbacks.Callback):
     def __init__(self, filename, leadtimes, loss):
         self.filename = filename
@@ -509,3 +523,19 @@ class Testing(keras.callbacks.Callback):
 
     def on_predict_end(self, logs=None):
         print("#")
+
+class Verbose(keras.callbacks.Callback):
+    def on_train_end(self, logs=None):
+        print("ON TRAIN END")
+    def on_train_begin(self, logs=None):
+        print("ON TRAIN BEGIN")
+
+    def on_train_batch_end(self, batch, logs=None):
+        print("      ON TRAIN BATCH END", batch)
+    def on_train_batch_begin(self, batch, logs=None):
+        print("      ON TRAIN BATCH BEGIN", batch)
+
+    def on_epoch_end(self, epoch, logs=None):
+        print("   ON EPOCH END", epoch)
+    def on_epoch_begin(self, epoch, logs=None):
+        print("   ON EPOCH BEGIN", epoch)

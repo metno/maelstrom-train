@@ -13,10 +13,15 @@ def get(config, quantiles=None):
         loss = maelstrom.loss.mae
     elif config["type"] == "mae_prob":
         loss = maelstrom.loss.mae_prob
+    elif config["type"] == "vector":
+        loss = maelstrom.loss.vector
     else:
         raise NotImplementedError()
 
     return loss
+
+def vector(y_true, y_pred):
+    return K.mean(K.abs(y_true - y_pred), axis=[0, 2, 3])
 
 
 def quantile_score(y_true, y_pred, quantiles):

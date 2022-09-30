@@ -138,10 +138,8 @@ def main():
 
     loss = maelstrom.loss.get(config["loss"], quantiles)
     metrics = []
-    if loss not in [maelstrom.loss.mae, maelstrom.loss.mae_prob]:
-        metrics = [
-            maelstrom.loss.mae
-        ]  # [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
+    if "metrics" in config:
+        metrics = [maelstrom.loss.get(config_metric) for config_metric in config["metrics"]]
 
     models = get_models(
         loader,
@@ -155,6 +153,7 @@ def main():
         raise Exception("No models selected")
 
     for model_name, model_config in models.items():
+        checkpoint_filepath = None
         start_time = time.time()
         dt = datetime.datetime.utcfromtimestamp(int(start_time))
         date, hour = maelstrom.util.unixtime_to_date(start_time)
@@ -201,17 +200,12 @@ def main():
                 if section not in ["models"]:
                     logger.add("Config", section.capitalize(), config[section])
 
-            timing_callback = maelstrom.callback.Timing(logger)
         callbacks = list()
         if args.do_train:
             if multigpu:
                 callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
                 callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
             if main_process:
-                callbacks += [
-                    maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
-                ]
-                callbacks += [timing_callback]
                 validation_frequency = None
                 if "validation_frequency" in config["training"]:
                     words = config["training"]["validation_frequency"].split(" ")
@@ -253,35 +247,47 @@ def main():
                 # Note that the ModelCheckpoint callback must be added after the validation
                 # callback, otherwise val_loss will not be recorded when the checkpoint callback is
                 # run.
-                if main_process:
-                    checkpoint_filepath = f"{output_folder}/checkpoint"
-                    checkpoint_frequency = "epoch"
-                    if validation_frequency is not None:
-                        checkpoint_frequency = validation_frequency
-                    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                        filepath=checkpoint_filepath,
-                        save_weights_only=True,
-                        save_freq=checkpoint_frequency,
-                        monitor=checkpoint_metric,
-                        verbose=1,
-                        mode='min',
-                        save_best_only=True
-                    )
-                    callbacks += [model_checkpoint_callback]
-                if num_trainable_weights < 1e5:
-                    callbacks += [
-                        maelstrom.callback.WeightsCallback(
-                            model, filename=f"{output_folder}/weights.nc"
-                        )
-                    ]
-                else:
-                    print(f"Too many trainable weights {num_trainable_weights}, not writing them out")
-                if "early_stopping" in config["training"]:
-                    callbacks += [
-                        tf.keras.callbacks.EarlyStopping(
-                            monitor="loss", **config["training"]["early_stopping"]
-                        )
-                    ]
+                if main_process and "callbacks" in config:
+                    if do_wandb:
+                        callbacks += [wandb.keras.WandbCallback()]
+                    for cb in config["callbacks"]:
+                        cb_args = {k:v for k,v in cb.items() if k not in ["type"]}
+                        if cb["type"] == "weights":
+                            if num_trainable_weights < 1e5:
+                                callbacks += [
+                                    maelstrom.callback.Weights(
+                                        model, filename=f"{output_folder}/weights.nc"
+                                    )
+                                ]
+                            else:
+                                print(f"Too many trainable weights {num_trainable_weights}, not writing them out")
+                        elif cb["type"] == "timing":
+                            callbacks += [maelstrom.callback.Timing(logger)]
+                        elif cb["type"] == "model_checkpoint":
+                            checkpoint_filepath = f"{output_folder}/checkpoint"
+                            checkpoint_frequency = "epoch"
+                            if validation_frequency is not None:
+                                checkpoint_frequency = validation_frequency
+                            model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+                                filepath=checkpoint_filepath,
+                                save_weights_only=True,
+                                save_freq=checkpoint_frequency,
+                                monitor=checkpoint_metric,
+                                verbose=1,
+                                mode='min',
+                                save_best_only=True
+                            )
+                            callbacks += [model_checkpoint_callback]
+                        elif cb["type"] == "early_stopping":
+                            callbacks += [
+                                tf.keras.callbacks.EarlyStopping( monitor="loss", **cb_args)
+                            ]
+                        elif cb["type"] == "verbose":
+                            callbacks += [maelstrom.callback.Verbose()]
+                        elif cb["type"] == "loss":
+                            callbacks += [
+                                maelstrom.callback.Loss(f"{output_folder}/{model_name}_loss.txt", **cb_args)
+                            ]
 
         s_time = time.time()
 
@@ -312,9 +318,11 @@ def main():
         if args.do_train:
             print("\n### Training ###")
             maelstrom.util.print_memory_usage()
+            # history = trainer.fit(dataset, epochs=epochs, steps_per_epoch=2, callbacks=callbacks, **kwargs)
             history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
             if main_process:
-                model.load_weights(checkpoint_filepath)
+                if checkpoint_filepath is not None:
+                    model.load_weights(checkpoint_filepath)
         else:
             history = None
 
