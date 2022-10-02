@@ -493,6 +493,9 @@ class DataLoader:
             idx = idx.numpy()[0]
             return self[idx]
 
+        # TODO: Split the file reading from the processing. That way the file reading can create a
+        # number of batches, and the processing can be run in parallel on each sample in the batch.
+
         f = lambda i: tf.py_function(
             func=getitem, inp=[i], Tout=[tf.float32, tf.float32]
         )
@@ -521,29 +524,29 @@ class DataLoader:
     def description(self):
         d = dict()
 
-        d["Predictor shape"] = ", ".join(["%d" % i for i in self.predictor_shape])
-        d["Target shape"] = ", ".join(["%d" % i for i in self.target_shape])
-        d["Num files"] = self.num_files
-        d["Samples per file"] = self.num_samples_per_file
+        d["predictor_shape"] = ", ".join(["%d" % i for i in self.predictor_shape])
+        d["target_shape"] = ", ".join(["%d" % i for i in self.target_shape])
+        d["num_files"] = self.num_files
+        d["samples_per_file"] = self.num_samples_per_file
         if self.patch_size is None:
-            d["Num samples"] = len(self) * self.num_samples_per_file
+            d["num_samples"] = len(self) * self.num_samples_per_file
         else:
-            d["Patches per sample"] = self.num_patches_per_sample
-            d["Num patches"] = self.num_patches
-            d["Patch size"] = self.patch_size
-        d["Num leadtimes"] = self.num_leadtimes
-        d["Batch size"] = self.batch_size
-        d["Num predictors"] = self.num_predictors
-        d["Num targets"] = self.num_targets
-        d["Predictors"] = list()
-        if self.patch_size is None:
-            d["Sample size (MB)"] = self.get_data_size() / 1024**2 / self.num_samples
-        else:
-            d["Patch size (MB)"] = self.get_data_size() / 1024**2 / self.num_patches
-        d["Total size (GB)"] = self.get_data_size() / 1024**3
+            d["patches_per_sample"] = self.num_patches_per_sample
+            d["num_patches"] = self.num_patches
+            d["patch_size"] = self.patch_size
+        d["num_leadtimes"] = self.num_leadtimes
+        d["batch_size"] = self.batch_size
+        d["num_predictors"] = self.num_predictors
+        d["num_targets"] = self.num_targets
+        d["predictors"] = list()
         if self.predictor_names is not None:
             for q in self.predictor_names:
-                d["Predictors"] += [str(q)]
+                d["predictors"] += [str(q)]
+        if self.patch_size is None:
+            d["sample_size_mb"] = self.get_data_size() / 1024**2 / self.num_samples
+        else:
+            d["patch_size_mb"] = self.get_data_size() / 1024**2 / self.num_patches
+        d["total_size_gb"] = self.get_data_size() / 1024**3
         return d
 
     def __str__(self):
