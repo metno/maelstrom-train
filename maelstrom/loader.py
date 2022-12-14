@@ -870,7 +870,8 @@ class FileLoader(DataLoader):
 
     @tf.function
     def normalize_new(self, predictors, targets):
-        v = tf.constant([0,1,2,3,4,5,6,7,8,9,10,11,12,13], tf.float32)
+        # TODO: Finish this
+        v = tf.constant([0,0,0,0,0,0,0,0,0,0,0,0,0,0], tf.float32)
         shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
         if 0:
             # Use if unbatch has not been run
@@ -880,7 +881,7 @@ class FileLoader(DataLoader):
         vv = tf.tile(vv, shape)
 
         p = tf.math.add(predictors, vv)
-        p = tf.math.divide(predictors, vv)
+        # p = tf.math.divide(predictors, vv)
 
         return p, targets
 
