@@ -313,6 +313,8 @@ class Lstm(Model):
     def get_layers(self):
         layers = list()
         conv_size = [self._neighbourhood_size, self._neighbourhood_size]
+        # for i in range(3):
+        #     layers += [keras.layers.Dense(6, activation=self._hidden_layer_activation)]
         for size in self._filter_sizes:
             layers += [
                 keras.layers.ConvLSTM2D(
@@ -449,6 +451,7 @@ class Unet(Model):
         levels=3,
         pool_size=2,
         conv_size=3,
+        upsampling_type="conv_transpose",
         with_leadtime=False,
     ):
         """U-net
@@ -457,14 +460,19 @@ class Unet(Model):
             features (int): Number of features in the first layer
             levels (int): Depth of the U-net
             pool_size (int): Pooling ratio (> 0)
+            upsampling_type (str): One of "upsampling" or "conv_transpose"
             conv_size (int): Convolution size (> 0)
             with_leadtime (bool): Should the last layer be leadtime dependent?
         """
+        if upsampling_type not in ["upsampling", "conv_transpose"]:
+            raise ValueError(f"Unknown upsampling type {upsampling_type}")
+
         self._features = features
         self._levels = levels
         self._pool_size = pool_size
         self._conv_size = conv_size
         self._with_leadtime = with_leadtime
+        self._upsampling_type = upsampling_type
 
         new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
 
@@ -477,45 +485,56 @@ class Unet(Model):
         features = self._features
 
         pool_size = [1, self._pool_size, self._pool_size]
-        if 1:
-            Conv = keras.layers.Conv3D
-            hood_size = [1, self._conv_size, self._conv_size]
-        elif 0:
-            Conv = maelstrom.layers.TimeDistributedConv2D
-            hood_size = [self._conv_size, self._conv_size]
-        else:
-            Conv = maelstrom.layers.SeparableConv2D
-            hood_size = [self._conv_size, self._conv_size]
+        hood_size = [1, self._conv_size, self._conv_size]
 
-        levels += [outputs]
+        Conv = keras.layers.Conv3D
+        if self._upsampling_type == "upsampling":
+            UpConv = keras.layers.UpSampling3D
+        elif self._upsampling_type == "conv_transpose":
+            UpConv = keras.layers.Conv3DTranspose
+
+        # Conv = maelstrom.layers.TimeDistributedConv2D
+        # hood_size = [self._conv_size, self._conv_size]
+        # Conv = maelstrom.layers.SeparableConv2D
+        # hood_size = [self._conv_size, self._conv_size]
+
         # Downsampling
-        for i in range(self._levels):
+        # conv -> conv -> max_pool
+        for i in range(self._levels - 1):
             outputs = Conv(features, hood_size, activation="relu", padding="same")(
                 outputs
             )
             outputs = Conv(features, hood_size, activation="relu", padding="same")(
                 outputs
             )
-            outputs = keras.layers.MaxPooling3D(pool_size=pool_size)(outputs)
-            # print(i, outputs.shape)
             levels += [outputs]
+            # print(i, outputs.shape)
+
+            outputs = keras.layers.MaxPooling3D(pool_size=pool_size)(outputs)
             features *= 2
 
-        features /= 2
+        # conv -> conv
+        outputs = Conv(features, hood_size, activation="relu", padding="same")(
+            outputs
+        )
+        outputs = Conv(features, hood_size, activation="relu", padding="same")(
+            outputs
+        )
 
-        # Upsampling
-        for i in range(self._levels - 1, -1, -1):
+        # upconv -> concat -> conv -> conv
+        for i in range(self._levels - 2, -1, -1):
             features /= 2
-            outputs = keras.layers.UpSampling3D(pool_size)(outputs)
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
-            # print(i, outputs.shape, levels[i].shape)
-            outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
+            outputs = UpConv(features, hood_size, strides=pool_size, padding="same")(outputs)
 
+            outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
+            outputs = Conv(features, hood_size, activation="relu", padding="same")(
+                outputs
+            )
+            outputs = Conv(features, hood_size, activation="relu", padding="same")(
+                outputs
+            )
+
+        # Dense layer at the end
         if self._with_leadtime:
             layer = keras.layers.Dense(self._num_outputs, activation="linear")
             outputs = maelstrom.layers.LeadtimeLayer(layer, "dependent")(outputs)
