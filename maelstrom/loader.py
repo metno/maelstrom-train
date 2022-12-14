@@ -322,11 +322,13 @@ class DataLoader:
             # self.write_debug("Cache miss")
             ss_time = time.time()
             predictors, targets = self.load_data(f)
+            self.write_debug(f"Loading {time.time() - s_time}")
             self.count_reads += 1
 
             # Perform all processing steps here
             times = [self.times[f]]
             predictors, targets = self.process(predictors, targets, times)
+            self.write_debug(f"Processing {time.time() - s_time}")
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
                 # self.write_debug("Clearing cache")
@@ -416,7 +418,7 @@ class DataLoader:
         # for i in range(predictors.shape[-1]):
         #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
         predictors, targets = self._process(predictors, targets, times)
-        # print("#2", predictors.shape)
+        print("#2", predictors.shape)
         predictors, targets = self.patch(predictors, targets)
         # print("After")
         # for i in range(predictors.shape[-1]):
@@ -488,21 +490,26 @@ class DataLoader:
         else:
             dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
 
-        def getitem(idx):
-            # A tensor is passed in, so decode it here
-            idx = idx.numpy()[0]
-            return self[idx]
+        load_func = lambda i: tf.py_function(func=self.load_data, inp=[i], Tout=[tf.float32, tf.float32])
+        patch_func = lambda i, j: tf.py_function(func=self.patch_new, inp=[i, j], Tout=[tf.float32, tf.float32])
+        normalize_func = lambda i, j: tf.py_function(func=self.normalize_new, inp=[i, j], Tout=[tf.float32, tf.float32])
+        features_func = lambda i, j: tf.py_function(func=self.compute_extra_features_new, inp=[i, j], Tout=[tf.float32, tf.float32])
 
-        f = lambda i: tf.py_function(
-            func=getitem, inp=[i], Tout=[tf.float32, tf.float32]
-        )
+        dataset = dataset.map(load_func, num_parallel_calls=self.num_parallel_calls) # -> (S, T, Y, X, P)
+        dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.unbatch()
+        dataset = dataset.map(self.normalize_new, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(self.diff_new, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
+        # To debug, use this instead, since then we use eager mode
+        # dataset = dataset.map(features_func, num_parallel_calls=self.num_parallel_calls)
 
         # If we add batch here, then in getitem we need idx.numpy()[0]
-        dataset = dataset.batch(1)
-        dataset = dataset.map(f, num_parallel_calls=self.num_parallel_calls)
+        # dataset = dataset.batch(1)
+        # dataset = dataset.map(f, num_parallel_calls=self.num_parallel_calls)
 
         # Since a file can contain multiple samples/patches, we need to rebatch the dataset
-        dataset = dataset.unbatch()
+        # dataset = dataset.unbatch()
         dataset = dataset.batch(self.batch_size)
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)  # .cache()
@@ -833,7 +840,88 @@ class FileLoader(DataLoader):
                 self.coefficients = yaml.load(file, Loader=yaml.SafeLoader)
         self.norm_cache = dict()
 
+        p = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 14).astype(np.float32))
+        t = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 1).astype(np.float32))
+
+        self.fixed_data =  p, t
+        del p, t
+
+    @tf.function
+    def patch_new(self, predictors, targets):
+        # predictors, targets = q
+        # Make it evenly divisible
+        ps = self.patch_size
+        predictors = predictors[:, :, :2321//ps * ps, :1796//ps * ps, :]
+        num_patches_x = predictors.shape[3] // ps
+        num_patches_y = predictors.shape[2] // ps
+        targets = targets[:, :, :2321//ps * ps, :1796//ps * ps, :]
+        # print(tf.shape(predictors))
+
+        p = tf.space_to_batch(predictors, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
+        t = tf.space_to_batch(targets, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
+        return p, t
+
+    @tf.function
+    def diff_new(self, predictors, targets):
+        Ip = 1
+        v = tf.expand_dims(predictors[..., Ip], 3)
+        t = tf.math.add(targets, v)
+        return predictors, t
+
+    @tf.function
+    def normalize_new(self, predictors, targets):
+        v = tf.constant([0,1,2,3,4,5,6,7,8,9,10,11,12,13], tf.float32)
+        shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
+        if 0:
+            # Use if unbatch has not been run
+            vv = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(v, 0), 0), 0), 0)
+        else:
+            vv = tf.expand_dims(tf.expand_dims(tf.expand_dims(v, 0), 0), 0)
+        vv = tf.tile(vv, shape)
+
+        p = tf.math.add(predictors, vv)
+        p = tf.math.divide(predictors, vv)
+
+        return p, targets
+
+    @tf.function
+    def compute_extra_features_new(self, predictors, targets):
+        p = [predictors]
+        shape = tf.shape(predictors)
+        # print(self.extra_features, shape)
+        for f, feature in enumerate(self.extra_features):
+            feature_type = feature["type"]
+            if feature_type == "x":
+                x = tf.range(shape[2], dtype=tf.float32)
+                curr = self.broadcast(x, shape, 2)
+            elif feature_type == "y":
+                x = tf.range(shape[1], dtype=tf.float32)
+                curr = self.broadcast(x, shape, 1)
+            elif feature_type == "leadtime":
+                x = tf.range(shape[0], dtype=tf.float32)
+                curr = self.broadcast(x, shape, 0)
+
+            p += [tf.expand_dims(curr, 3)] # , np.zeros(predictors.shape[0:4]), 3))
+        return tf.concat(p, 3), targets
+
+    @staticmethod
+    def broadcast(tensor, final_shape, axis):
+        if axis == 2:
+            tensor = tf.expand_dims(tf.expand_dims(tensor, 0), 1)
+            ret = tf.tile(tensor, [final_shape[0], final_shape[1], 1])
+        elif axis == 1:
+            tensor = tf.expand_dims(tf.expand_dims(tensor, 0), 2)
+            ret = tf.tile(tensor, [final_shape[0], 1, final_shape[2]])
+        else:
+            tensor = tf.expand_dims(tf.expand_dims(tensor, 1), 2)
+            ret = tf.tile(tensor, [1, final_shape[1], final_shape[2]])
+        # new_shape = tf.transpose(final_shape, [axis, -1])
+        # ret = tf.broadcast_to(tensor, new_shape)
+        # ret = tf.transpose(ret, -1, axis)
+        return ret
+
     def load_data(self, index):
+        # return self.fixed_data
         """This function needs to know what predictors/static predictors to load"""
         s_time = time.time()
         filename = self.filenames[index]
@@ -915,6 +1003,7 @@ class FileLoader(DataLoader):
                 self.x_range,
                 self.y_range,
             )
+            predictors = tf.convert_to_tensor(predictors)
             reading_time += time.time() - ss_time
             if "static_predictors" in ifile.variables:
                 if (
@@ -930,6 +1019,7 @@ class FileLoader(DataLoader):
                         self.x_range,
                         self.y_range,
                     )
+                    temp = tf.convert_to_tensor(temp)
                     reading_time += time.time() - ss_time
 
                     ss_time = time.time()
@@ -947,13 +1037,9 @@ class FileLoader(DataLoader):
                         for i in range(new_shape[1]):
                             static_predictors[:, i, ...] = temp
                     else:
-                        new_shape = (predictors.shape[0],) + temp.shape
-                        static_predictors = np.zeros(new_shape, np.float32)
-                        for i in range(new_shape[0]):
-                            static_predictors[i, ...] = temp
-                    predictors = np.concatenate(
-                        (predictors, static_predictors), axis=-1
-                    )
+                        temp = tf.expand_dims(temp, 0)
+                        static_predictors = tf.tile(temp, [predictors.shape[0], 1, 1, 1])
+                    predictors = tf.concat((predictors, static_predictors), axis=-1)
                     ee_time = time.time()
                     reshaping_static_predictors_time += ee_time - ss_time
 
@@ -966,7 +1052,8 @@ class FileLoader(DataLoader):
                 self.y_range,
             )
             reading_time += time.time() - ss_time
-            targets = np.expand_dims(targets, -1)
+            targets = tf.convert_to_tensor(targets)
+            targets = tf.expand_dims(targets, -1)
             if self.probabilistic_target:
                 # num_targets = 1 + self.probabilistic_target
                 # target_shape = ifile.variables["target_mean"].shape + (num_targets,)
@@ -980,16 +1067,21 @@ class FileLoader(DataLoader):
                     self.y_range,
                 )
                 reading_time += time.time() - ss_time
-                std = np.expand_dims(std, -1)
-                targets = np.concatenate((targets, std), axis=-1)
+                std = tf.convert_to_tensor(std)
+                std = tf.expand_dims(std, -1)
+                targets = tf.concat((targets, std), axis=-1)
 
             if "sample" not in ifile.dimensions:
-                predictors = np.expand_dims(predictors, 0)
-                targets = np.expand_dims(targets, 0)
+                predictors = tf.expand_dims(predictors, 0)
+                targets = tf.expand_dims(targets, 0)
             # self.write_debug("time: %.1f s" % (time.time() - s_time))
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
+            print(predictors.shape, targets.shape)
+            for k,v in self.timing.items():
+                print(k, v)
+            print("Total load time", time.time() - s_time)
             return predictors, targets
 
     def load_metadata(self, filenames):
