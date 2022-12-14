@@ -65,3 +65,11 @@ def meanfcst(y_true, y_pred):
 
 def meanobs(y_true, y_pred):
     return K.mean(y_true)
+
+def sharpness(y_true, y_pred):
+    """Width of outer quantiles"""
+    return K.mean(y_pred[..., -1] - y_pred[..., 0])
+
+def reliability(y_true, y_pred):
+    """Fraction of targets that fall within the outer quantiles"""
+    return K.mean(tf.cast(y_pred[..., 0] < y_true[..., 0], tf.float32) * tf.cast(y_pred[..., -1] > y_true[..., 0], tf.float32))
