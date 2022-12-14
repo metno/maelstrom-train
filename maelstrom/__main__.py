@@ -103,14 +103,14 @@ def main():
         print(loader_val == loader_test)
         print(loader == loader_test)
 
-    if "tensorflow" in config and args.num_threads != 1:
+    if 0 and "tensorflow" in config and args.num_threads != 1:
         tf.config.threading.set_intra_op_parallelism_threads(
             config["tensorflow"]["num_threads"]
         )
         tf.config.threading.set_inter_op_parallelism_threads(
             config["tensorflow"]["num_threads"]
         )
-    if args.num_threads is not None and args.num_threads > 1:
+    if 0 and args.num_threads is not None and args.num_threads > 1:
         tf.config.threading.set_intra_op_parallelism_threads(args.num_threads)
         tf.config.threading.set_inter_op_parallelism_threads(args.num_threads)
 
@@ -469,7 +469,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     total_loss = 0
     count = 0
 
-    if 0:
+    if 1:
         """Using keras.predict and prefetching
 
         The advantage is that prefetching will work automatically

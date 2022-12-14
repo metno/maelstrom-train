@@ -303,23 +303,15 @@ class DataLoader:
             t (tf.tensor): Tensor with target data (sample, leadtime, y, x, target)
         """
 
-        # print(idx, self.sample_indices)
         s_time = time.time()
         ids = self.sample_indices[idx]
         f = ids // self.num_samples_per_file
-        # print(f"#2 idx={idx}, ids={ids}, f={f}, in={f in self.cache}")
-        # if f in self.cache:
-        #     raise Exception()
-        # print(f, idx, self.num_samples_per_file, self.num_files)
         s = idx % self.num_samples_per_file
         assert f < self.num_files
-        # print(f"Getting {f} {s}")
 
         if self.cache_size is not None and self.cache_size > 0 and f in self.cache:
-            # self.write_debug("Cache hit")
             p, t = self.cache[f]
         else:
-            # self.write_debug("Cache miss")
             ss_time = time.time()
             predictors, targets = self.load_data(f)
             self.write_debug(f"Loading {time.time() - s_time}")
@@ -327,7 +319,7 @@ class DataLoader:
 
             # Perform all processing steps here
             times = [self.times[f]]
-            predictors, targets = self.process(predictors, targets, times)
+            p, t = self.process(predictors, targets, times)
             self.write_debug(f"Processing {time.time() - s_time}")
 
             if self.cache_size is not None and len(self.cache) >= self.cache_size:
@@ -335,10 +327,7 @@ class DataLoader:
                 self.cache.clear()
 
             ss_time = time.time()
-            # p = tf.convert_to_tensor(predictors[[s], ...])
-            # t = tf.convert_to_tensor(targets[[s], ...])
-            p = tf.convert_to_tensor(predictors)
-            t = tf.convert_to_tensor(targets)
+
             self.timing["convert"] += time.time() - ss_time
             self.cache[f] = p, t
             self.write_debug(f"Loaded and processed {idx} {time.time() - s_time}")
@@ -413,17 +402,11 @@ class DataLoader:
         This can be for example, normalizing data, feature extraction, augmentation, etc.  Subclases
         can override this
         """
-        # print("#1", predictors.shape)
-        # print("Before")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        predictors, targets = self._process(predictors, targets, times)
-        print("#2", predictors.shape)
-        predictors, targets = self.patch(predictors, targets)
-        # print("After")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        # sys.exit()
+        predictors, targets = self.patch_new(predictors, targets)
+        print(tf.shape(predictors))
+        predictors, targets = self.normalize_new(predictors, targets)
+        predictors, targets = self.diff_new(predictors, targets)
+        predictors, targets = self.compute_extra_features_new(predictors, targets)
 
         return predictors, targets
 
@@ -1079,10 +1062,10 @@ class FileLoader(DataLoader):
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
-            print(predictors.shape, targets.shape)
-            for k,v in self.timing.items():
-                print(k, v)
-            print("Total load time", time.time() - s_time)
+            # print(predictors.shape, targets.shape)
+            # for k,v in self.timing.items():
+            #     print(k, v)
+            # print("Total load time", time.time() - s_time)
             return predictors, targets
 
     def load_metadata(self, filenames):
