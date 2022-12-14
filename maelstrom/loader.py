@@ -823,11 +823,10 @@ class FileLoader(DataLoader):
                 self.coefficients = yaml.load(file, Loader=yaml.SafeLoader)
         self.norm_cache = dict()
 
-        p = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 14).astype(np.float32))
-        t = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 1).astype(np.float32))
-
-        self.fixed_data =  p, t
-        del p, t
+        # p = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 14).astype(np.float32))
+        # t = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 1).astype(np.float32))
+        # self.fixed_data =  p, t
+        # del p, t
 
     @tf.function
     def patch_new(self, predictors, targets):
