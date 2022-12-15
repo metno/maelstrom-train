@@ -78,11 +78,13 @@ class WeightsCallback(keras.callbacks.Callback):
         # print(self.model.layers[0].get_weights())
         # weights = np.squeeze(self.model.layers[0].get_weights())
         self.num_batches += 1
+        # print("END BATCH", batch)
 
     def on_epoch_begin(self, epoch, logs=None):
         pass
 
     def on_epoch_end(self, epoch, logs=None):
+        # print("END EPOCH", epoch)
         self.num_epochs += 1
         self.batch_weights += [self.curr_batch_weights]
         for k, v in self.curr_batch_metrics.items():
@@ -222,13 +224,18 @@ class Convergence(keras.callbacks.Callback):
         if self.include_batch_logs:
             self.batch_results += [(batch, logs)]
         self.num_batches += 1
+        # print("BATCH END", batch)
 
     def on_epoch_begin(self, epochs, logs=None):
+        # print("EPOCH BEGIN", epochs)
         self.batch_results.clear()
         self.num_batches = 0
 
     def on_epoch_end(self, epoch, logs={}):
+        # print("EPOCH END", epoch)
         # Step size of each batch
+        if self.num_batches == 0:
+            return
         if self.leadtime_is_batch:
             dx = 1
         else:

@@ -161,6 +161,9 @@ class DataLoader:
         self.leadtimes = leadtimes
         self.predictor_names = predictor_names
         self.predict_diff = predict_diff
+        self.predictor_diff_index = None
+        if self.predict_diff:
+            self.predictor_diff_index = self.predictor_names.index("air_temperature_2m")
         self.num_targets = num_targets
         self.num_samples_per_file = num_samples_per_file
         self.patch_size = patch_size
@@ -479,20 +482,14 @@ class DataLoader:
         features_func = lambda i, j: tf.py_function(func=self.compute_extra_features_new, inp=[i, j], Tout=[tf.float32, tf.float32])
 
         dataset = dataset.map(load_func, num_parallel_calls=self.num_parallel_calls) # -> (S, T, Y, X, P)
+        dataset = dataset.unbatch()
+        dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.unbatch()
-        dataset = dataset.map(self.normalize_new, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.map(self.diff_new, num_parallel_calls=self.num_parallel_calls)
-        dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
-        # To debug, use this instead, since then we use eager mode
-        # dataset = dataset.map(features_func, num_parallel_calls=self.num_parallel_calls)
-
-        # If we add batch here, then in getitem we need idx.numpy()[0]
-        # dataset = dataset.batch(1)
-        # dataset = dataset.map(f, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(self.normalize_new, num_parallel_calls=self.num_parallel_calls)
 
         # Since a file can contain multiple samples/patches, we need to rebatch the dataset
-        # dataset = dataset.unbatch()
         dataset = dataset.batch(self.batch_size)
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)  # .cache()
@@ -818,9 +815,24 @@ class FileLoader(DataLoader):
         )
 
         self.coefficients = None
+        self.coefficients_new = None
         if normalization is not None:
             with open(normalization) as file:
                 self.coefficients = yaml.load(file, Loader=yaml.SafeLoader)
+                # Add normalization information for the extra features
+                for k,v in self.get_extra_features_normalization(self.extra_features).items():
+                    self.coefficients[k] = v
+
+                self.coefficients_new = np.zeros([len(self.predictor_names), 2], np.float32)
+                for i, name in enumerate(self.predictor_names):
+                    if name in self.coefficients:
+                        self.coefficients_new[i, :] = self.coefficients[name]
+                    elif name in self.extra_features:
+                        sel.coefficients_new[i, :] = [1, 0]
+                    else:
+                        self.coefficients_new[i, :] = [1, 0]
+
+        # print(self.coefficients)
         self.norm_cache = dict()
 
         # p = tf.convert_to_tensor(np.random.rand(1, 12, 2321, 1796, 14).astype(np.float32))
@@ -831,47 +843,110 @@ class FileLoader(DataLoader):
     @tf.function
     def patch_new(self, predictors, targets):
         # predictors, targets = q
-        # Make it evenly divisible
         ps = self.patch_size
-        predictors = predictors[:, :, :2321//ps * ps, :1796//ps * ps, :]
-        num_patches_x = predictors.shape[3] // ps
-        num_patches_y = predictors.shape[2] // ps
-        targets = targets[:, :, :2321//ps * ps, :1796//ps * ps, :]
-        # print(tf.shape(predictors))
+        if ps is None:
+            return tf.expand_dims(predictors, 0),  tf.expand_dims(targets, 0)
 
-        p = tf.space_to_batch(predictors, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
-        t = tf.space_to_batch(targets, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
+        # Apply patching
+        # This doesn't work, since it doesn't keep next to each other pixels, but strides across
+        # p = tf.space_to_batch(predictors, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
+        # t = tf.space_to_batch(targets, [1, num_patches_y, num_patches_x, 1], np.zeros([4, 2]))
+
+        def patch_tensor(a, ps):
+            """ Patch a 4D array
+            Args:
+                a (tf.tensor): 4D (leadtime, y, x, predictor)
+                ps (int): Patch size
+
+            Returns:
+                tf.tensor: 5D (patch, leadtime, ps, ps, predictor)
+            """
+
+            # This is magic, don't ask how it works...
+            LT = a.shape[0]
+            Y = a.shape[1]
+            X = a.shape[2]
+            P = a.shape[3]
+            num_patches_y = Y // ps
+            num_patches_x = X // ps
+
+            # Remove edge of domain to make it evenly divisible
+            a = a[:, :Y//ps * ps, :X//ps * ps, :]
+
+            a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
+            a = tf.expand_dims(a, 0)
+            a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
+            a = tf.transpose(a, [1, 0, 2, 3, 4])
+            return a
+
+        p = patch_tensor(predictors, ps)
+        t = patch_tensor(targets, ps)
         return p, t
 
     @tf.function
     def diff_new(self, predictors, targets):
-        Ip = 1
-        v = tf.expand_dims(predictors[..., Ip], 3)
-        t = tf.math.add(targets, v)
+        print(self.predictor_diff_index)
+        if self.predictor_diff_index is None:
+            return predictors, targets
+        Ip = self.predictor_diff_index
+        v = tf.expand_dims(predictors[..., Ip], -1)
+        t = tf.math.subtract(targets, v)
         return predictors, t
 
     @tf.function
     def normalize_new(self, predictors, targets):
-        # TODO: Finish this
-        v = tf.constant([0,0,0,0,0,0,0,0,0,0,0,0,0,0], tf.float32)
-        shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
-        if 0:
-            # Use if unbatch has not been run
-            vv = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(v, 0), 0), 0), 0)
-        else:
-            vv = tf.expand_dims(tf.expand_dims(tf.expand_dims(v, 0), 0), 0)
-        vv = tf.tile(vv, shape)
+        if self.coefficients_new is None:
+            return predictors, targets
 
-        p = tf.math.add(predictors, vv)
-        # p = tf.math.divide(predictors, vv)
+        a = self.coefficients_new[:, 0]
+        s = self.coefficients_new[:, 1]
+        shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
+
+        def expand_array(a, shape):
+            """Expands array a so that it has the shape"""
+            if 0:
+                # Use if unbatch has not been run
+                a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
+            else:
+                a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
+            a = tf.tile(a, shape)
+            return a
+
+        a = expand_array(a, shape)
+        s = expand_array(s, shape)
+
+        p = tf.math.subtract(predictors, a)
+        p = tf.math.divide(p, s)
 
         return p, targets
 
+    def get_extra_features_normalization(self, extra_features):
+        normalization = dict()
+        X = self.num_x * self.num_x_patches_per_file
+        Y = self.num_y * self.num_y_patches_per_file
+        for feature in extra_features:
+            feature_name = self.get_feature_name(feature)
+            feature_type = feature["type"]
+            curr = [0, 1]
+            if feature_type == "x":
+                val = np.arange(X)
+                curr = [np.mean(val), np.std(val)]
+            elif feature_type == "y":
+                val = np.arange(Y)
+                curr = [np.mean(val), np.std(val)]
+            elif feature_type == "leadtime":
+                val = np.arange(self.num_leadtimes)
+                curr = [np.mean(val), np.std(val)]
+
+            normalization[feature_name] = curr
+        return normalization
+
+
     @tf.function
     def compute_extra_features_new(self, predictors, targets):
+        """Takes 4D tensors and adds new features"""
         p = [predictors]
         shape = tf.shape(predictors)
-        # print(self.extra_features, shape)
         for f, feature in enumerate(self.extra_features):
             feature_type = feature["type"]
             if feature_type == "x":
@@ -884,8 +959,9 @@ class FileLoader(DataLoader):
                 x = tf.range(shape[0], dtype=tf.float32)
                 curr = self.broadcast(x, shape, 0)
 
-            p += [tf.expand_dims(curr, 3)] # , np.zeros(predictors.shape[0:4]), 3))
-        return tf.concat(p, 3), targets
+            p += [tf.expand_dims(curr, 3)]
+        p = tf.concat(p, 3)
+        return p, targets
 
     @staticmethod
     def broadcast(tensor, final_shape, axis):

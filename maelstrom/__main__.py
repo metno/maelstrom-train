@@ -212,32 +212,10 @@ def main():
                     maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
                 ]
                 callbacks += [timing_callback]
-                validation_frequency = None
-                if "validation_frequency" in config["training"]:
-                    words = config["training"]["validation_frequency"].split(" ")
-                    if len(words) != 2:
-                        raise ValueError(
-                            "validation_frequency must be in the form <value> <unit>"
-                        )
-                    freq, freq_units = words
-                    freq = int(freq)
-                    if freq_units == "epoch":
-                        if freq == 1:
-                            validation_frequency = None
-                        else:
-                            validation_frequency = (
-                                loader.num_patches_per_file * loader.num_files * freq
-                            )
-                    elif freq_units == "file":
-                        validation_frequency = loader.num_patches_per_file * freq
-                    elif freq_units == "batch":
-                        validation_frequency = freq
-                    else:
-                        raise ValueError(
-                            f"Unknown validation frequency units '{frequency}'"
-                        )
+                validation_frequency = get_validation_frequency(config, loader)
 
                 checkpoint_metric = 'loss'
+                """
                 if do_validation and main_process:
                     callbacks += [
                         maelstrom.callback.Validation(
@@ -249,6 +227,7 @@ def main():
                         )
                     ]
                     checkpoint_metric = 'val_loss'
+                """
 
                 # Note that the ModelCheckpoint callback must be added after the validation
                 # callback, otherwise val_loss will not be recorded when the checkpoint callback is
@@ -268,7 +247,7 @@ def main():
                         save_best_only=True
                     )
                     callbacks += [model_checkpoint_callback]
-                if num_trainable_weights < 1e5:
+                if 0 and num_trainable_weights < 1e5:
                     callbacks += [
                         maelstrom.callback.WeightsCallback(
                             model, filename=f"{output_folder}/weights.nc"
@@ -287,8 +266,10 @@ def main():
 
         # This is the keras way of running validation. However, now we do validation via a
         # validation callback above instead.
-        if 0 and do_validation:
+        if 1 and do_validation:
             kwargs = {"validation_data": dataset_val}
+            if "steps_per_epoch" in config["training"]:
+                kwargs["steps_per_epoch"] = config["training"]["steps_per_epoch"]
         else:
             kwargs = {}
         # kwargs["verbose"] = main_process
@@ -633,6 +614,35 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             raise ValueError(f"Unknown validation type {eval_type}")
         evaluators += [evaluator]
     return evaluators
+
+
+def get_validation_frequency(config, loader):
+    validation_frequency = None
+    if "validation_frequency" in config["training"]:
+        words = config["training"]["validation_frequency"].split(" ")
+        if len(words) != 2:
+            raise ValueError(
+                "validation_frequency must be in the form <value> <unit>"
+            )
+        freq, freq_units = words
+        freq = int(freq)
+        if freq_units == "epoch":
+            if freq == 1:
+                validation_frequency = None
+            else:
+                validation_frequency = (
+                    loader.num_patches_per_file * loader.num_files * freq
+                )
+        elif freq_units == "file":
+            validation_frequency = loader.num_patches_per_file * freq
+        elif freq_units == "batch":
+            validation_frequency = freq
+        else:
+            raise ValueError(
+                f"Unknown validation frequency units '{frequency}'"
+            )
+    return validation_frequency
+
 
 if __name__ == "__main__":
     main()
