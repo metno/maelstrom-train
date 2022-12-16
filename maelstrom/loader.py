@@ -480,14 +480,24 @@ class DataLoader:
         patch_func = lambda i, j: tf.py_function(func=self.patch_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         normalize_func = lambda i, j: tf.py_function(func=self.normalize_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         features_func = lambda i, j: tf.py_function(func=self.compute_extra_features_new, inp=[i, j], Tout=[tf.float32, tf.float32])
+        reorder_func = lambda i, j: tf.py_function(func=self.reorder, inp=[i, j], Tout=[tf.float32, tf.float32])
 
         dataset = dataset.map(load_func) # -> (S, T, Y, X, P)
         dataset = dataset.unbatch()
         # TODO: Does tensorflow only parallelize dataset maps across batches? I.e. should we try to
         # patch first? Or shall we try to process leadtimes in parallel?
-        dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
-        dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
-        dataset = dataset.unbatch()
+        if 0:
+            dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.unbatch()
+        else:
+            # Unbatch the leadtimes before doing patching
+            dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.unbatch()
+            dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.batch(self.num_leadtimes)
+            dataset = dataset.map(reorder_func, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.unbatch()
         dataset = dataset.map(self.diff_new, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.map(self.normalize_new, num_parallel_calls=self.num_parallel_calls)
 
@@ -497,6 +507,10 @@ class DataLoader:
             dataset = dataset.prefetch(self.prefetch)  # .cache()
 
         return dataset
+
+    def reorder(self, predictors, targets):
+        print("REORDER", tf.shape(predictors))
+        return tf.transpose(predictors, [1, 0, 2, 3, 4]), tf.transpose(targets, [1, 0, 2, 3, 4])
 
     def get_data_size(self):
         """Returns the number of bytes needed to store the full dataset"""
@@ -842,7 +856,7 @@ class FileLoader(DataLoader):
         # self.fixed_data =  p, t
         # del p, t
 
-    @tf.function
+    # @tf.function
     def patch_new(self, predictors, targets):
         # predictors, targets = q
         ps = self.patch_size
@@ -863,26 +877,43 @@ class FileLoader(DataLoader):
             Returns:
                 tf.tensor: 5D (patch, leadtime, ps, ps, predictor)
             """
-
             # This is magic, don't ask how it works...
-            LT = a.shape[0]
-            Y = a.shape[1]
-            X = a.shape[2]
-            P = a.shape[3]
-            num_patches_y = Y // ps
-            num_patches_x = X // ps
 
-            # Remove edge of domain to make it evenly divisible
-            a = a[:, :Y//ps * ps, :X//ps * ps, :]
+            if len(a.shape) == 4:
+                LT = a.shape[0]
+                Y = a.shape[1]
+                X = a.shape[2]
+                P = a.shape[3]
+                num_patches_y = Y // ps
+                num_patches_x = X // ps
 
-            a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
-            a = tf.expand_dims(a, 0)
-            a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
-            a = tf.transpose(a, [1, 0, 2, 3, 4])
-            return a
+                # Remove edge of domain to make it evenly divisible
+                a = a[:, :Y//ps * ps, :X//ps * ps, :]
+
+                a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
+                a = tf.expand_dims(a, 0)
+                a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
+                a = tf.transpose(a, [1, 0, 2, 3, 4])
+                return a
+            else:
+                Y = a.shape[0]
+                X = a.shape[1]
+                P = a.shape[2]
+                num_patches_y = Y // ps
+                num_patches_x = X // ps
+
+                # Remove edge of domain to make it evenly divisible
+                a = a[:Y//ps * ps, :X//ps * ps, :]
+                a = tf.expand_dims(a, 0)
+
+                a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
+                a = tf.reshape(a, [num_patches_y * num_patches_x, ps, ps, P])
+                # a = tf.transpose(a, [1, 0, 2, 3, 4])
+                return a
 
         p = patch_tensor(predictors, ps)
         t = patch_tensor(targets, ps)
+        print("PATCHING", tf.shape(p))
         return p, t
 
     @tf.function
@@ -948,6 +979,9 @@ class FileLoader(DataLoader):
     def compute_extra_features_new(self, predictors, targets):
         maelstrom.util.print_memory_usage("   Compute extra features")
         """Takes 4D tensors and adds new features"""
+        if len(self.extra_features):
+            return predictors, targets
+
         p = [predictors]
         shape = tf.shape(predictors)
         for f, feature in enumerate(self.extra_features):
