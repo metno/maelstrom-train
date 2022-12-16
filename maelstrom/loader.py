@@ -481,8 +481,10 @@ class DataLoader:
         normalize_func = lambda i, j: tf.py_function(func=self.normalize_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         features_func = lambda i, j: tf.py_function(func=self.compute_extra_features_new, inp=[i, j], Tout=[tf.float32, tf.float32])
 
-        dataset = dataset.map(load_func, num_parallel_calls=self.num_parallel_calls) # -> (S, T, Y, X, P)
+        dataset = dataset.map(load_func) # -> (S, T, Y, X, P)
         dataset = dataset.unbatch()
+        # TODO: Does tensorflow only parallelize dataset maps across batches? I.e. should we try to
+        # patch first? Or shall we try to process leadtimes in parallel?
         dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
         dataset = dataset.unbatch()
@@ -944,6 +946,7 @@ class FileLoader(DataLoader):
 
     @tf.function
     def compute_extra_features_new(self, predictors, targets):
+        maelstrom.util.print_memory_usage("   Compute extra features")
         """Takes 4D tensors and adds new features"""
         p = [predictors]
         shape = tf.shape(predictors)
@@ -980,13 +983,17 @@ class FileLoader(DataLoader):
         return ret
 
     def load_data(self, index):
-        # return self.fixed_data
+        def debug_memory(message):
+            maelstrom.util.print_memory_usage(message + ":")
+            pass
+
         """This function needs to know what predictors/static predictors to load"""
         s_time = time.time()
         filename = self.filenames[index]
         mem_usage = maelstrom.util.get_memory_usage() / 1024**3
         self.write_debug(f"Loading {index} {filename}: {mem_usage:.1f} GB memory")
 
+        maelstrom.util.print_memory_usage("Start")
         reading_time = 0
         reshaping_static_predictors_time = 0
         with netCDF4.Dataset(filename, "r") as ifile:
@@ -1062,7 +1069,11 @@ class FileLoader(DataLoader):
                 self.x_range,
                 self.y_range,
             )
+            debug_memory("   Loaded predictors")
+            # print("   Loaded predictors", time.time() - s_time)
             predictors = tf.convert_to_tensor(predictors)
+            debug_memory("   Convert predictors")
+            # print("   Converted predictors", time.time() - s_time)
             reading_time += time.time() - ss_time
             if "static_predictors" in ifile.variables:
                 if (
@@ -1078,7 +1089,9 @@ class FileLoader(DataLoader):
                         self.x_range,
                         self.y_range,
                     )
+                    debug_memory("   Loaded static")
                     temp = tf.convert_to_tensor(temp)
+                    debug_memory("   Converted static")
                     reading_time += time.time() - ss_time
 
                     ss_time = time.time()
@@ -1098,9 +1111,12 @@ class FileLoader(DataLoader):
                     else:
                         temp = tf.expand_dims(temp, 0)
                         static_predictors = tf.tile(temp, [predictors.shape[0], 1, 1, 1])
+                    debug_memory("   Tiled static")
                     predictors = tf.concat((predictors, static_predictors), axis=-1)
                     ee_time = time.time()
                     reshaping_static_predictors_time += ee_time - ss_time
+            # print("   Loaded static", time.time() - s_time)
+            debug_memory("   Concat static")
 
             ss_time = time.time()
             targets = get(
@@ -1110,9 +1126,12 @@ class FileLoader(DataLoader):
                 self.x_range,
                 self.y_range,
             )
+            debug_memory("   Loaded targets")
+            # print("   Loaded target", time.time() - s_time)
             reading_time += time.time() - ss_time
             targets = tf.convert_to_tensor(targets)
             targets = tf.expand_dims(targets, -1)
+            debug_memory("   Converved target")
             if self.probabilistic_target:
                 # num_targets = 1 + self.probabilistic_target
                 # target_shape = ifile.variables["target_mean"].shape + (num_targets,)
@@ -1140,8 +1159,10 @@ class FileLoader(DataLoader):
             # print(predictors.shape, targets.shape)
             # for k,v in self.timing.items():
             #     print(k, v)
-            # print("Total load time", time.time() - s_time)
-            return predictors, targets
+        mem_usage = maelstrom.util.get_memory_usage() / 1024**3
+        self.write_debug(f"Total load time {time.time() - s_time}: {mem_usage:.1f} GB memory")
+        # debug_memory(f"Total load time {time.time() - s_time}")
+        return predictors, targets
 
     def load_metadata(self, filenames):
         filename = filenames[0]
