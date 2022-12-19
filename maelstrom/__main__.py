@@ -15,6 +15,14 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow import keras
 
+try:
+    from deep500.utils import timer_tf as timer
+    do_deep500 = True
+except Exception as e:
+    print("Cannot load deep500")
+    do_deep500 = False
+
+
 # os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
 # os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
 
@@ -48,6 +56,7 @@ def main():
     if args.seed is not None:
         tf.random.set_seed(args.seed)
         np.random.seed(args.seed)
+
 
     # Deal with GPUs
     multigpu = False
@@ -126,7 +135,7 @@ def main():
         dataset = loader.get_dataset(True)
 
 
-    do_validation = loader_val is not None and loader_val != loader
+    do_validation = 0 and loader_val is not None and loader_val != loader
     dataset_val = dataset
     if do_validation:
         # Don't use batches for the test dataset
@@ -301,6 +310,9 @@ def main():
         curr_args["loss"] = loss
         trainer = maelstrom.trainer.get(**curr_args)
 
+        if main_process and do_deep500:
+            tmr = timer.CPUGPUTimer()
+            callbacks += [timer.TimerCallback(tmr, gpu=True)]
         # Note: We could add a check for num_trainable_parameters > 0
         # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
         # and skip training (this could be the raw model for example). However, we might still want
@@ -312,7 +324,15 @@ def main():
         if args.do_train:
             print("\n### Training ###")
             maelstrom.util.print_memory_usage()
-            history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
+            # history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
+            # NOTE: When keras run with a generator with unknown length, we need to tell keras how
+            # long it is. DO this by specifying steps_per_epoch, and then making dataset repeat
+            # itself.
+            history = trainer.fit(dataset.repeat(epochs), epochs=epochs, callbacks=callbacks,
+                    steps_per_epoch=loader.num_patches, **kwargs)
+            if main_process and do_deep500:
+                tmr.complete_all()
+                tmr.print_all_time_stats()
             if main_process:
                 model.load_weights(checkpoint_filepath)
         else:
