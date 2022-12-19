@@ -479,16 +479,20 @@ class DataLoader:
         load_func = lambda i: tf.py_function(func=self.load_data, inp=[i], Tout=[tf.float32, tf.float32])
         patch_func = lambda i, j: tf.py_function(func=self.patch_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         normalize_func = lambda i, j: tf.py_function(func=self.normalize_new, inp=[i, j], Tout=[tf.float32, tf.float32])
+        diff_func = lambda i, j: tf.py_function(func=self.diff_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         features_func = lambda i, j: tf.py_function(func=self.compute_extra_features_new, inp=[i, j], Tout=[tf.float32, tf.float32])
         reorder_func = lambda i, j: tf.py_function(func=self.reorder, inp=[i, j], Tout=[tf.float32, tf.float32])
+
+        # tf.debugging.set_log_device_placement(True)
 
         dataset = dataset.map(load_func) # -> (S, T, Y, X, P)
         dataset = dataset.unbatch()
         # TODO: Does tensorflow only parallelize dataset maps across batches? I.e. should we try to
         # patch first? Or shall we try to process leadtimes in parallel?
-        if 0:
-            dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=self.num_parallel_calls)
-            dataset = dataset.map(patch_func, num_parallel_calls=self.num_parallel_calls)
+        if 1:
+            dataset = dataset.map(self.compute_extra_features_new, num_parallel_calls=1)
+            # dataset = dataset.map(self.patch_new, num_parallel_calls=self.num_parallel_calls)
+            dataset = dataset.map(patch_func, num_parallel_calls=1)
             dataset = dataset.unbatch()
         else:
             # Unbatch the leadtimes before doing patching
@@ -509,8 +513,10 @@ class DataLoader:
         return dataset
 
     def reorder(self, predictors, targets):
-        print("REORDER", tf.shape(predictors))
-        return tf.transpose(predictors, [1, 0, 2, 3, 4]), tf.transpose(targets, [1, 0, 2, 3, 4])
+        print("REORDER", tf.shape(predictors), self.num_leadtimes)
+        p, t = tf.transpose(predictors, [1, 0, 2, 3, 4]), tf.transpose(targets, [1, 0, 2, 3, 4])
+        print(tf.shape(p))
+        return p, t
 
     def get_data_size(self):
         """Returns the number of bytes needed to store the full dataset"""
@@ -858,6 +864,7 @@ class FileLoader(DataLoader):
 
     # @tf.function
     def patch_new(self, predictors, targets):
+        print("Start patching", time.time() - self.s_time)
         # predictors, targets = q
         ps = self.patch_size
         if ps is None:
@@ -889,11 +896,16 @@ class FileLoader(DataLoader):
 
                 # Remove edge of domain to make it evenly divisible
                 a = a[:, :Y//ps * ps, :X//ps * ps, :]
+                # print("   #1", time.time() - self.s_time)
 
                 a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
+                # print("   #2", time.time() - self.s_time)
                 a = tf.expand_dims(a, 0)
+                # print("   #3", time.time() - self.s_time)
                 a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
+                # print("   #4", time.time() - self.s_time)
                 a = tf.transpose(a, [1, 0, 2, 3, 4])
+                # print("   #5", time.time() - self.s_time)
                 return a
             else:
                 Y = a.shape[0]
@@ -912,8 +924,9 @@ class FileLoader(DataLoader):
                 return a
 
         p = patch_tensor(predictors, ps)
+        # print("   ", time.time() - self.s_time)
         t = patch_tensor(targets, ps)
-        print("PATCHING", tf.shape(p))
+        # print("PATCHING", tf.shape(p), time.time() - self.s_time)
         return p, t
 
     @tf.function
@@ -1017,12 +1030,22 @@ class FileLoader(DataLoader):
         return ret
 
     def load_data(self, index):
+        self.s_time = time.time()
         def debug_memory(message):
             maelstrom.util.print_memory_usage(message + ":")
             pass
 
         """This function needs to know what predictors/static predictors to load"""
         s_time = time.time()
+
+        """
+        LT = 8
+        p, t = tf.convert_to_tensor(np.zeros([1, LT, 2321, 1796, 14], np.float32)), tf.convert_to_tensor(np.zeros([1, LT, 2321, 1796, 1], np.float32))
+        mem_usage = maelstrom.util.get_memory_usage() / 1024**3
+        self.write_debug(f"Total load time {time.time() - s_time}: {mem_usage:.1f} GB memory")
+        return p, t
+        """
+
         filename = self.filenames[index]
         mem_usage = maelstrom.util.get_memory_usage() / 1024**3
         self.write_debug(f"Loading {index} {filename}: {mem_usage:.1f} GB memory")

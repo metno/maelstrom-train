@@ -324,10 +324,12 @@ class Keras:
         self.model = model
         self.optimizer = optimizer
         self.loss = loss
+        """
         self._callbacks = callbacks
         self.callbacks = tf.keras.callbacks.CallbackList(
             self._callbacks, add_history=True, model=self.model
         )
+        """
 
     def fit(self, *args, **kwargs):
         return self.model.fit(*args, **kwargs)
