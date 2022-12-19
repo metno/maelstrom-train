@@ -151,7 +151,12 @@ class Timing(keras.callbacks.Callback):
         self.epochs += [total_time]
         self.num_epochs = epoch + 1
 
+    def on_train_batch_begin(self, batch, logs):
+        # print("HERE BEGIN", batch)
+        pass
+
     def on_train_batch_end(self, batch, logs):
+        # print("HERE END", batch)
         self.num_batches += 1
 
     def on_train_end(self, logs={}):
