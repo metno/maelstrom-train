@@ -2,17 +2,19 @@ import maelstrom.new_loader
 import numpy as np
 import time
 import sys
+import tensorflow as tf
 
 config = {
-          "filenames": [ "data/air_temperature/5TB/20200301T*Z.nc"],
+          # "filenames": [ "data/air_temperature/5TB/2020030*T*Z.nc"],
+          "filenames": [ "data/air_temperature/5TB/2020030*T*Z.nc"],
           # "filenames": [ "test/files/air_temperature/5GB/*T*Z.nc"],
           "normalization": "test/files/normalization.yml",
           "predict_diff": True,
           # "limit_predictors": ["air_temperature_2m", "precipitation_amount", "altitude"],
-          "patch_size": 256,
+          # "patch_size": 32,
           # "debug": True,
-          "limit_leadtimes": [0, 1, 2],
-          # "extra_features": [{"type": "x"}],
+          # "limit_leadtimes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+          "extra_features": [{"type": "x"}, {"type": "x"}, {"type": "x"}],
           }
 loader = maelstrom.new_loader.Loader(**config)
 
@@ -25,27 +27,46 @@ print(time.time() - s_time)
 sys.exit()
 """
 
-dataset = loader.get_dataset(1)
+# dataset = loader.get_dataset(tf.data.AUTOTUNE)
+dataset = loader.get_dataset(12)
 
 s_time = time.time()
 count = 0
+first_time = None
+N = loader.num_patches
+print(N)
 for sample in dataset:
-    if count % 63 == 0:
-        print("## File", count // 63, time.time() - loader.s_time)
-    count += 1
-    # print(np.nanmean(sample), sample.shape)
-    # print(time.time() - s_time, len(sample), sample[0].shape)
-    if count > 1:
-        # print(count, time.time() - second_time, (time.time() - second_time) / (count - 1))
+    print(sample[0].shape)
+    file_index = count // N
+    if count % N == 0:
+        if file_index == 0:
+            first_time = time.time()
+        print("## Start file:", file_index, time.time() - loader.s_time)
+
+    # print(count)
+    # print("##    ", count, time.time() - loader.s_time, (time.time() - loader.s_time) / (count + 1) * N)
+    if (count + 1) % N == 0:
+        # Last one for the file
+        print("   End file:", file_index)
+        print("   Curr accum time:", time.time() - loader.s_time)
+        print("   Time per file:", (time.time() - loader.s_time) / (file_index + 1))
+        if file_index > 0:
+            print("   Time per file (skip first):", (time.time() - first_time) / (file_index))
+        if file_index == 0:
+            first_time = time.time()
+        # maelstrom.util.print_memory_usage("%d" % count)
+        # print("##    ", count // N, time.time() - first_time, (time.time() - first_time) / (count - 1) * N)
         pass
-    print("##    ", count, time.time() - loader.s_time, (time.time() - loader.s_time) / (count))
-    # maelstrom.util.print_memory_usage("%d" % count)
     if count == 2:
         second_time = time.time()
+
+    count += 1
 print(loader.logger)
 total = 0
 for k,v in loader.logger.results.items():
     total += v
 print("Logger total", total)
-print("Total time", time.time() - s_time)
+total_time = time.time() - s_time
+print("Total time", total_time)
+print("Time per file", total_time / loader.num_files)
 print("Number of samples", count)
