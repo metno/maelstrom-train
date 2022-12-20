@@ -39,6 +39,7 @@ class Loader:
         quick_metadata=True,
         debug=False,
     ):
+        self.show_debug = debug
         self.filenames = list()
         for f in filenames:
             self.filenames += glob.glob(f)
@@ -49,6 +50,12 @@ class Loader:
         self.patch_size = patch_size
         self.read_metadata(self.filenames[0])
         self.logger = maelstrom.timer.Timer("test.txt")
+
+        self.s_time = time.time()
+
+    def debug(self, *args):
+        if self.show_debug:
+            print(*args)
 
     def get_dataset(self, num_parallel_calls=1):
         """Notes on strategies for loading data
@@ -61,23 +68,44 @@ class Loader:
             z = list(range(self.num_files * self.num_leadtimes))
         else:
             z = list(range(self.num_files))
+
+        def convert(p, t):
+            print("Start convert", time.time() - self.s_time)
+            p, t = tf.convert_to_tensor(p), tf.convert_to_tensor(t)
+            self.debug("Convert", p.device)
+            return p, t
+
+        def to_gpu(p, t):
+            s_time = time.time()
+            p, t = tf.identity(p), tf.identity(t)
+            self.debug("Moving ", tf.shape(p), "to device", p.device)
+            # print("to_gpu", tf.shape(p))
+            self.logger.add("to_gpu", time.time() - s_time)
+            print("Moved to gpu", time.time() - self.s_time, time.time() - s_time)
+            return p, t
+
         load_func = lambda i: tf.py_function(func=self.read_file, inp=[i], Tout=[tf.float32, tf.float32])
         # load_func = lambda i: tf.py_function(func=self.generate_fake_data, inp=[i], Tout=[tf.float32, tf.float32])
         split_func = lambda i, j: tf.py_function(func=self.split, inp=[i, j], Tout=[tf.float32, tf.float32])
         reorder_func = lambda i, j: tf.py_function(func=self.reorder, inp=[i, j], Tout=[tf.float32, tf.float32])
         patch_func = lambda i, j: tf.py_function(func=self.patch, inp=[i, j], Tout=[tf.float32, tf.float32])
+        convert_func = lambda i, j: tf.py_function(func=convert, inp=[i, j], Tout=[tf.float32, tf.float32])
+        to_gpu_func = lambda i, j: tf.py_function(func=to_gpu, inp=[i, j], Tout=[tf.float32, tf.float32])
 
         # Get a list of numbers
         dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
 
         # Load the data from one file
-        dataset = dataset.map(load_func, num_parallel_calls=num_parallel_calls)
+        dataset = dataset.map(load_func, num_parallel_calls=1)
 
         # Split leadtime into samples
         dataset = dataset.unbatch()
 
         # Patch each leadtime
         dataset = dataset.map(patch_func, num_parallel_calls=num_parallel_calls)
+        # dataset = dataset.unbatch()
+
+        dataset = dataset.map(convert_func, num_parallel_calls=num_parallel_calls)
 
         # Collect leadtimes
         dataset = dataset.batch(self.num_leadtimes)
@@ -87,6 +115,9 @@ class Loader:
 
         # Split patches into samples
         dataset = dataset.unbatch()
+
+        # dataset = dataset.map(to_gpu_func, num_parallel_calls=num_parallel_calls)
+        self.s_time = time.time()
         return dataset
 
     def __getitem__(self, idx):
@@ -114,23 +145,27 @@ class Loader:
         self.num_predictors = len(dataset.predictor) + len(dataset.static_predictor)
         if self.limit_predictors is not None:
             self.num_predictors = len(self.limit_predictors)
-        print(self.num_x, self.num_y)
+        self.debug(self.num_x, self.num_y)
         dataset.close()
 
     def read_file(self, index, leadtime_indices=None):
-        print("Loading", index)
+        # self.s_time = time.time()
+        s_time = time.time()
+        self.debug("Loading", index)
+        print("Loading", index.numpy(), time.time() - self.s_time)
         s_time = time.time()
         p, t = self.parse_file(self.filenames[index])
-        self.logger.add("load", time.time() - s_time)
+        print("Done loading", time.time() - self.s_time, time.time() - s_time)
         return p, t
 
         # Parallelize leadtimes
         file_index = index.numpy() // self.num_leadtimes
         leadtime_indices = [index.numpy() % self.num_leadtimes]
-        return self.parse_file(self.filenames[file_index], leadtime_indices)
+        p, t = self.parse_file(self.filenames[file_index], leadtime_indices)
+        return p, t
 
     def generate_fake_data(self, index):
-        print("Loading", index)
+        self.debug("Loading", index)
         s_time = time.time()
         shape = [self.num_leadtimes, self.num_y, self.num_x, self.num_predictors]
         p = np.zeros(shape, np.float32)
@@ -148,7 +183,8 @@ class Loader:
             np.array: 4D array of predictors
             np.array: 4D array of observations
         """
-        print(filename, leadtime_indices)
+        s_time = time.time()
+        self.debug("Loading", filename)
         dataset = xr.open_dataset(filename, decode_timedelta=False)
         Ip = range(len(dataset.predictor))
 
@@ -182,9 +218,16 @@ class Loader:
         targets = np.expand_dims(targets, 3)
 
         dataset.close()
-        # print("Loaded: ", tf.shape(predictors))
-        return tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
-        # return predictors, targets
+
+        # p, t = predictors, targets
+        self.debug("Finished parsing", time.time() - s_time)
+        self.logger.add("parse", time.time() - s_time)
+        s_time = time.time()
+        with tf.device("CPU:0"):
+            p, t = tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
+        self.debug("Convert", time.time() - s_time)
+        self.logger.add("convert", time.time() - s_time)
+        return p, t
 
     def parse_file_netcdf(self, filename, leadtime_indices=None):
         """
@@ -196,7 +239,8 @@ class Loader:
             np.array: 4D array of predictors
             np.array: 4D array of observations
         """
-        print(filename, leadtime_indices)
+        s_time = time.time()
+        self.debug("Loading", filename)
         with netCDF4.Dataset(filename) as dataset:
 
             dims = dataset.dimensions
@@ -233,28 +277,43 @@ class Loader:
             targets = dataset.variables["target_mean"][It, :, :]
             targets = np.expand_dims(targets, 3)
 
-        return tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
+        p, t = predictors, targets
+        self.debug("Finished parsing", time.time() - s_time)
+        # p, t = tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
+        # self.debug("Convert", time.time() - s_time)
+        return p, t
 
     def split(self, predictors, targets):
         pass
 
     def reorder(self, predictors, targets):
+        print("Start reordering", time.time() - self.s_time)
+        self.debug("Reorder start", predictors.device)
         s_time = time.time()
-        # print("REORDER", tf.shape(predictors))
-        p = tf.transpose(predictors, [1, 0, 2, 3, 4])
-        t = tf.transpose(targets, [1, 0, 2, 3, 4])
+        self.debug("REORDER", tf.shape(predictors))
+        with tf.device("CPU:0"):
+            p = tf.transpose(predictors, [1, 0, 2, 3, 4])
+            t = tf.transpose(targets, [1, 0, 2, 3, 4])
         self.logger.add("reorder", time.time() - s_time)
+        self.debug("Done reordering", time.time() - self.s_time, p.device)
+        print("Done reordering", time.time() - self.s_time)
         return p, t
 
     def patch(self, predictors, targets):
         s_time = time.time()
-        # print("PATCHING", tf.shape(predictors))
+        self.debug("Start patch", time.time() - self.s_time, tf.shape(predictors))
+        print("Start patching", time.time() - self.s_time)
+        # self.debug("PATCHING", tf.shape(predictors))
         # p = predictors
         # t = targets
 
         ps = self.patch_size
         if ps is None:
-            return tf.expand_dims(predictors, 0),  tf.expand_dims(targets, 0)
+            # self.debug("Done patching", time.time() - self.s_time)
+            with tf.device("CPU:0"):
+                p, t = tf.expand_dims(predictors, 0),  tf.expand_dims(targets, 0)
+            self.debug(p.device)
+            return p, t
 
         def patch_tensor(a, ps):
             """ Patch a 4D array
@@ -277,16 +336,16 @@ class Loader:
 
                 # Remove edge of domain to make it evenly divisible
                 a = a[:, :Y//ps * ps, :X//ps * ps, :]
-                # print("   #1", time.time() - self.s_time)
+                # self.debug("   #1", time.time() - self.s_time)
 
                 a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
-                # print("   #2", time.time() - self.s_time)
+                # self.debug("   #2", time.time() - self.s_time)
                 a = tf.expand_dims(a, 0)
-                # print("   #3", time.time() - self.s_time)
+                # self.debug("   #3", time.time() - self.s_time)
                 a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
-                # print("   #4", time.time() - self.s_time)
+                # self.debug("   #4", time.time() - self.s_time)
                 a = tf.transpose(a, [1, 0, 2, 3, 4])
-                # print("   #5", time.time() - self.s_time)
+                # self.debug("   #5", time.time() - self.s_time)
                 return a
             else:
                 Y = a.shape[0]
@@ -304,10 +363,11 @@ class Loader:
                 # a = tf.transpose(a, [1, 0, 2, 3, 4])
                 return a
 
-        p = patch_tensor(predictors, ps)
-        # print("   ", time.time() - self.s_time)
-        t = patch_tensor(targets, ps)
-        # print(p.shape)
+        with tf.device("CPU:0"):
+            p = patch_tensor(predictors, ps)
+            t = patch_tensor(targets, ps)
 
         self.logger.add("patch", time.time() - s_time)
+        # self.debug("Done patching", time.time() - self.s_time)
+        print("Done patching", time.time() - self.s_time, tf.shape(p))
         return p, t
