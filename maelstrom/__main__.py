@@ -130,8 +130,7 @@ def main():
         # print(type(dataset))
         dataset = loader.get_dataset(True, hvd.size(), hvd.local_rank())
     else:
-        dataset = loader.get_dataset(True)
-
+        dataset = loader.get_dataset(True, repeat=epochs)
 
     do_validation = loader_val is not None and loader_val != loader
     dataset_val = dataset
@@ -307,7 +306,7 @@ def main():
             # NOTE: When keras run with a generator with unknown length, we need to tell keras how
             # long it is. DO this by specifying steps_per_epoch, and then making dataset repeat
             # itself.
-            history = trainer.fit(dataset.repeat(epochs), epochs=epochs, callbacks=callbacks,
+            history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks,
                     steps_per_epoch=loader.num_patches, **kwargs)
             if main_process and do_deep500:
                 tmr.complete_all()

@@ -85,7 +85,7 @@ class Loader:
         if self.show_debug:
             print(*args)
 
-    def get_dataset(self, randomize_order=False, num_parallel_calls=1):
+    def get_dataset(self, randomize_order=False, num_parallel_calls=1, repeat=None):
         """Notes on strategies for loading data
 
         It doesn't really make sense to parallelize the reading across leadtimes, since we still
@@ -101,6 +101,8 @@ class Loader:
         else:
             z = list(range(self.num_files))
         dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
+        if repeat is not None:
+            dataset = dataset.repeat(repeat)
 
         # Load the data from one file
         load_file = lambda i: tf.py_function(func=self.load_file, inp=[i], Tout=[tf.float32, tf.float32])
