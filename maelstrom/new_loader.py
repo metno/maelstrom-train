@@ -50,11 +50,12 @@ class Loader:
         predict_diff=False,
         batch_size=1,
         prefetch=None,
-        num_parallel_calls=1,
+        num_parallel_calls=None,
         extra_features=[],
         quick_metadata=True,
         debug=False,
         fake=False,
+        to_gpu=True,
     ):
         self.show_debug = debug
         self.filenames = list()
@@ -67,10 +68,13 @@ class Loader:
         #     self.limit_leadtimes = [int(i * 3600) for i in self.limit_leadtimes]
         self.patch_size = patch_size
         self.predict_diff = predict_diff
+        self.batch_size = batch_size
+        self.prefetch = prefetch
         self.load_metadata(self.filenames[0])
         self.logger = maelstrom.timer.Timer("test.txt")
         self.normalization = normalization
         self.fake = fake
+        self.num_parallel_calls = num_parallel_calls
 
         self.load_coefficients()
         print(self.coefficients)
@@ -81,24 +85,31 @@ class Loader:
         if self.show_debug:
             print(*args)
 
-    def get_dataset(self, num_parallel_calls=1):
+    def get_dataset(self, randomize_order=False, num_parallel_calls=1):
         """Notes on strategies for loading data
 
         It doesn't really make sense to parallelize the reading across leadtimes, since we still
         have to wait for all leadtimes to finish
         """
 
+        if self.num_parallel_calls is not None:
+            num_parallel_calls = self.num_parallel_calls
+
         # Get a list of numbers
-        z = list(range(self.num_files))
+        if randomize_order:
+            z = np.argsort(np.random.rand(self.num_files)).tolist()
+        else:
+            z = list(range(self.num_files))
         dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
 
         # Load the data from one file
         load_file = lambda i: tf.py_function(func=self.load_file, inp=[i], Tout=[tf.float32, tf.float32])
         dataset = dataset.map(load_file, num_parallel_calls=1)
+        # dataset.take(1)
 
         # Split leadtime into samples
-        dataset = dataset.unbatch()
         if num_parallel_calls != tf.data.AUTOTUNE:
+            dataset = dataset.unbatch()
             dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
 
         # Patch each leadtime
@@ -121,10 +132,14 @@ class Loader:
         dataset = dataset.unbatch()
 
         # Move tensor to GPU. We do this at the end to save GPU memory
-        # dataset = dataset.map(self.to_gpu, num_parallel_calls=num_parallel_calls)
+        if self.to_gpu:
+            dataset = dataset.map(self.to_gpu, num_parallel_calls=num_parallel_calls)
 
         # Add sample dimension
-        dataset = dataset.batch(1)
+        dataset = dataset.batch(self.batch_size)
+
+        if self.prefetch is not None:
+            dataset = dataset.prefetch(self.prefetch)
 
         self.s_time = time.time()
         return dataset
@@ -133,22 +148,40 @@ class Loader:
         pass
 
     @property
-    def num_leadtimes(self):
-        pass
+    def predictor_shape(self):
+        return [
+            self.num_leadtimes,
+            self.num_y,
+            self.num_x,
+            self.num_predictors,
+        ]
+
+    @property
+    def target_shape(self):
+        return [
+            self.num_leadtimes,
+            self.num_y,
+            self.num_x,
+            self.num_targets,
+        ]
 
     @property
     def num_files(self):
         return len(self.filenames)
 
     @property
-    def num_patches(self):
+    def num_patches_per_file(self):
         return self.num_x_patches * self.num_y_patches
+
+    @property
+    def num_patches(self):
+        return self.num_patches_per_file * self.num_files
 
     @property
     def predictor_diff_index(self):
         predictor_diff_index = None
         if self.predict_diff:
-            predictor_diff_index = self.predictors.index("air_temperature_2m")
+            predictor_diff_index = self.predictor_names.index("air_temperature_2m")
             return predictor_diff_index
 
     @property
@@ -170,12 +203,43 @@ class Loader:
                 raise ValueError("Patch size too small")
         self.num_input_predictors = len(dataset.predictor) + len(dataset.static_predictor)
         self.num_predictors = self.num_input_predictors + len(self.extra_features)
-        self.predictors_input = [p for p in dataset.predictor.to_numpy()] + [p for p in dataset.static_predictor.to_numpy()]
-        self.predictors= self.predictors_input + [self.get_feature_name(p) for p in self.extra_features]
+        self.predictor_names_input = [p for p in dataset.predictor.to_numpy()] + [p for p in dataset.static_predictor.to_numpy()]
+        self.predictor_names = self.predictor_names_input + [self.get_feature_name(p) for p in self.extra_features]
         if self.limit_predictors is not None:
             self.num_predictors = len(self.limit_predictors)
 
+        self.num_targets = 1
+
         dataset.close()
+
+    def description(self):
+        d = dict()
+        d["Predictor shape"] = ", ".join(["%d" % i for i in self.predictor_shape])
+        d["Target shape"] = ", ".join(["%d" % i for i in self.target_shape])
+        d["Num files"] = self.num_files
+
+        if self.patch_size is None:
+            # d["Num samples"] = len(self) * self.num_samples_per_file
+            pass
+        else:
+            d["Patches per file"] = self.num_patches_per_file
+            d["Num patches"] = self.num_patches
+            d["Patch size"] = self.patch_size
+        d["Batch size"] = self.batch_size
+        d["Num predictors"] = self.num_predictors
+        d["Num targets"] = self.num_targets
+        d["Patch size (MB)"] = self.get_data_size() / 1024**2 / self.num_patches
+        d["Total size (GB)"] = self.get_data_size() / 1024**3
+
+        d["Predictors"] = list()
+        if self.predictor_names is not None:
+            for q in self.predictor_names:
+                d["Predictors"] += [str(q)]
+        return d
+
+    def __str__(self):
+        """Returns a string representation of the dataset"""
+        return json.dumps(self.description(), indent=4)
 
     @property
     def num_x(self):
@@ -198,8 +262,12 @@ class Loader:
     @property
     def num_x_patches(self):
         if self.patch_size is not None:
-            return self.num_y_input // self.patch_size
+            return self.num_x_input // self.patch_size
         return 1
+
+    @property
+    def num_patches_per_file(self):
+        return self.num_y_patches * self.num_x_patches
 
     @map_decorator
     def convert(self, p, t):
@@ -551,7 +619,7 @@ class Loader:
                 for k,v in self.get_extra_features_normalization(self.extra_features).items():
                     coefficients[k] = v
 
-                for i, name in enumerate(self.predictors):
+                for i, name in enumerate(self.predictor_names):
                     if name in coefficients:
                         self.coefficients[i, :] = coefficients[name]
                     elif name in self.extra_features:
@@ -585,3 +653,11 @@ class Loader:
             return feature["name"]
         else:
             return feature["type"]
+
+    def get_data_size(self):
+        """Returns the number of bytes needed to store the full dataset"""
+        size_per_patch = (
+            4
+            * (np.product(self.predictor_shape) + np.product(self.target_shape))
+        )
+        return size_per_patch * self.num_patches
