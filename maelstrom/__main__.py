@@ -389,16 +389,16 @@ def get_loaders(config):
         raise ValueError("'loader' section not specified in YAML")
 
     loader_config = config["loader"]
-    loader = maelstrom.loader.get(loader_config)
+    loader = maelstrom.new_loader.get(loader_config)
     loader_test = loader
     loader_val = None
 
     if "loader_validation" in config:
-        loader_val = maelstrom.loader.get(config["loader_validation"])
+        loader_val = maelstrom.new_loader.get(config["loader_validation"])
         loader_test = loader_val
 
     if "loader_test" in config:
-        loader_test = maelstrom.loader.get(config["loader_test"])
+        loader_test = maelstrom.new_loader.get(config["loader_test"])
 
     return loader, loader_val, loader_test
 
