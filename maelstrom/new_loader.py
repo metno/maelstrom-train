@@ -22,6 +22,18 @@ import math
 
 def get(config):
     kwargs = {k:v for k,v in config.items() if k != "type"}
+    range_variables = ["x_range", "y_range", "limit_leadtimes"]
+    # Process value arguments
+    for range_variable in range_variables:
+        if range_variable in kwargs:
+            curr = kwargs[range_variable]
+            if isinstance(curr, str):
+                if curr.find(":") == -1:
+                    raise ValueError(
+                        f"Cannot interpret range string {curr}. Should be in the form start:end"
+                    )
+                start, end = curr.split(":")
+                kwargs[range_variable] = range(int(start), int(end))
     return Loader(**kwargs)
 
 def map_decorator(func):
@@ -64,6 +76,8 @@ class Loader:
             self.filenames += glob.glob(f)
         self.limit_predictors = limit_predictors
         self.limit_leadtimes = limit_leadtimes
+        self.x_range = x_range
+        self.y_range = y_range
         # if limit_leadtimes is not None:
         #     self.limit_leadtimes = [int(i * 3600) for i in self.limit_leadtimes]
         self.patch_size = patch_size
@@ -80,6 +94,7 @@ class Loader:
         self.load_coefficients()
         print(self.coefficients)
 
+        self.timing = collections.defaultdict(lambda: 0)
         self.s_time = time.time()
 
     def debug(self, *args):
@@ -194,12 +209,34 @@ class Loader:
     def num_leadtimes(self):
         return len(self.leadtimes)
 
+    def get_dimension_limits(self, dataset, leadtime_indices=None):
+        limit = dict()
+        if self.limit_predictors is not None:
+            limit["predictor"] = [i for i in range(len(dataset.predictor)) if dataset.predictor[i] in self.limit_predictors]
+            limit["static_predictor"] = [i for i in range(len(dataset.static_predictor)) if dataset.static_predictor[i] in self.limit_predictors]
+        if leadtime_indices is None:
+            if self.limit_leadtimes is not None:
+                # limit["leadtime"] = [i for i in range(len(dataset.leadtime)) if dataset.leadtime[i] in self.limit_leadtimes]
+                limit["leadtime"] = self.limit_leadtimes
+        else:
+            if self.limit_leadtimes is not None:
+                limit["leadtime"] = [dataset.leadtime[i] for i in leadtime_indices]
+            else:
+                limit["leadtime"] = leadtime_indices
+        if self.x_range is not None:
+            limit["x"] = self.x_range
+        if self.y_range is not None:
+            limit["y"] = self.y_range
+        return limit
+
     def load_metadata(self, filename):
         dataset = xr.open_dataset(filename, decode_timedelta=False)
+        limit = self.get_dimension_limits(dataset)
+        dataset = dataset.isel(**limit)
 
-        self.leadtimes = dataset.leadtime
-        if self.limit_leadtimes is not None:
-            self.leadtimes = [dataset.leadtime[i] for i in self.limit_leadtimes]
+        self.leadtimes = dataset.leadtime.to_numpy()
+        # if self.limit_leadtimes is not None:
+        #     self.leadtimes = [dataset.leadtime[i] for i in self.limit_leadtimes]
         self.num_x_input = len(dataset.x)
         self.num_y_input = len(dataset.y)
         if self.patch_size is not None:
@@ -225,8 +262,7 @@ class Loader:
         d["Num files"] = self.num_files
 
         if self.patch_size is None:
-            # d["Num samples"] = len(self) * self.num_samples_per_file
-            pass
+            d["Num samples"] = self.num_files * self.num_patches_per_file
         else:
             d["Patches per file"] = self.num_patches_per_file
             d["Num patches"] = self.num_patches
@@ -339,28 +375,19 @@ class Loader:
             np.array: 4D array of predictors
             np.array: 4D array of observations
         """
+        # maelstrom.util.print_memory_usage("1")
         s_time = time.time()
         self.debug("Loading", filename)
         dataset = xr.open_dataset(filename, decode_timedelta=False)
         Ip = range(len(dataset.predictor))
 
         # Figure out which dimensions should be limited
-        limit = dict()
-        if self.limit_predictors is not None:
-            limit["predictor"] = [i for i in range(len(dataset.predictor)) if dataset.predictor[i] in self.limit_predictors]
-            limit["static_predictor"] = [i for i in range(len(dataset.static_predictor)) if dataset.static_predictor[i] in self.limit_predictors]
-        if leadtime_indices is None:
-            if self.limit_leadtimes is not None:
-                # limit["leadtime"] = [i for i in range(len(dataset.leadtime)) if dataset.leadtime[i] in self.limit_leadtimes]
-                limit["leadtime"] = self.limit_leadtimes
-        else:
-            if self.limit_leadtimes is not None:
-                limit["leadtime"] = [dataset.leadtime[i] for i in leadtime_indices]
-            else:
-                limit["leadtime"] = leadtime_indices
+        limit = self.get_dimension_limits(dataset)
 
         dataset = dataset.isel(**limit)
 
+        # predictors = np.zeros([59, 2321, 1796, 14], np.float32)
+        # predictors[..., 0:8] = dataset["predictors"]
         predictors = dataset["predictors"]
         # Merge static predictors
         if len(dataset.static_predictor) > 0:
