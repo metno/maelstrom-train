@@ -111,18 +111,22 @@ class Loader:
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
 
+        # num_parallel_calls = tf.data.AUTOTUNE
+
         # Get a list of numbers
         if randomize_order:
             z = np.argsort(np.random.rand(self.num_files)).tolist()
         else:
             z = list(range(self.num_files))
         dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
+
         if repeat is not None:
             dataset = dataset.repeat(repeat)
 
         # Load the data from one file
         load_file = lambda i: tf.py_function(func=self.load_file, inp=[i], Tout=[tf.float32, tf.float32])
         dataset = dataset.map(load_file, num_parallel_calls=1)
+        # dataset = dataset.shuffle(buffer_size=1)
         # dataset.take(1)
 
         # Split leadtime into samples
@@ -140,14 +144,19 @@ class Loader:
             dataset = dataset.map(self.normalize, num_parallel_calls=num_parallel_calls)
 
         # Collect leadtimes
-        dataset = dataset.unbatch()
-        dataset = dataset.batch(self.num_leadtimes)
+        if num_parallel_calls != tf.data.AUTOTUNE:
+            dataset = dataset.unbatch()
+            dataset = dataset.batch(self.num_leadtimes)
 
         # Move patch into sample dimension
         dataset = dataset.map(self.reorder, num_parallel_calls=num_parallel_calls)
 
         # Split patches into samples
         dataset = dataset.unbatch()
+
+        # Cache tensors on the CPU
+        if self.cache:
+            dataset = dataset.cache()
 
         # Move tensor to GPU. We do this at the end to save GPU memory
         if self.to_gpu:
@@ -158,9 +167,6 @@ class Loader:
 
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)
-
-        if self.cache:
-            dataset = dataset.cache()
 
         self.s_time = time.time()
         return dataset
@@ -336,13 +342,14 @@ class Loader:
 
     def load_file(self, index, leadtime_indices=None):
         s_time = time.time()
-        print("Loading", index.numpy(), time.time() - self.s_time)
+        print("Loading", index.numpy(), self.filenames[index], time.time() - self.s_time)
         self.debug("Loading", index)
         if self.fake:
             p, t = self.generate_fake_data(index)
         else:
             p, t = self.parse_file(self.filenames[index])
-        print("Done loading", time.time() - self.s_time, time.time() - s_time)
+        # print("Done loading", time.time() - self.s_time, time.time() - s_time)
+        # maelstrom.util.print_memory_usage()
         return p, t
 
         # Parallelize leadtimes
@@ -396,6 +403,7 @@ class Loader:
             for lt in range(predictors.shape[0]):
                 static_predictors[lt, ...] = static_predictors0
             predictors = np.concatenate((predictors, static_predictors), axis=3)
+            # predictors[..., 8:14] = static_predictors
 
         targets = dataset["target_mean"]
         targets = np.expand_dims(targets, 3)
@@ -407,9 +415,15 @@ class Loader:
         self.logger.add("parse", time.time() - s_time)
         s_time = time.time()
         with tf.device("CPU:0"):
-            p, t = tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
+            t = tf.convert_to_tensor(targets)
+            del targets
+            # s = tf.convert_to_tensor(static_predictors)
+            # del static_predictors
+            p = tf.convert_to_tensor(predictors)
+            del predictors
         self.debug("Convert", time.time() - s_time)
         self.logger.add("convert", time.time() - s_time)
+        # maelstrom.util.print_memory_usage()
         return p, t
 
     def parse_file_netcdf(self, filename, leadtime_indices=None):
