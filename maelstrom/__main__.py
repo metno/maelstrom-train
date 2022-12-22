@@ -240,13 +240,10 @@ def main():
                 # run.
                 if main_process:
                     checkpoint_filepath = f"{output_folder}/checkpoint"
-                    checkpoint_frequency = "epoch"
-                    if validation_frequency is not None:
-                        checkpoint_frequency = validation_frequency
                     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                         filepath=checkpoint_filepath,
                         save_weights_only=True,
-                        save_freq=checkpoint_frequency,
+                        save_freq=validation_frequency,
                         monitor=checkpoint_metric,
                         verbose=1,
                         mode='min',
@@ -274,6 +271,13 @@ def main():
         # validation callback above instead.
         if 1 and do_validation:
             kwargs = {"validation_data": dataset_val}
+            print("EPOCH", epochs)
+            print("NUM PATCHES", loader.num_patches)
+            print("NUM PATCHES PER FILE", loader.num_patches_per_file)
+            print("VALIDATION FREQUENCY", validation_frequency)
+            keras_epochs = epochs * loader.num_patches // validation_frequency
+            print("Number of keras epochs", keras_epochs)
+
             if "steps_per_epoch" in config["training"]:
                 kwargs["steps_per_epoch"] = config["training"]["steps_per_epoch"]
         else:
@@ -290,7 +294,7 @@ def main():
 
         if main_process and do_deep500:
             tmr = timer.CPUGPUTimer()
-            callbacks += [timer.TimerCallback(tmr, gpu=True)]
+            callbacks = [timer.TimerCallback(tmr, gpu=True)]
         # Note: We could add a check for num_trainable_parameters > 0
         # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
         # and skip training (this could be the raw model for example). However, we might still want
@@ -306,8 +310,8 @@ def main():
             # NOTE: When keras run with a generator with unknown length, we need to tell keras how
             # long it is. DO this by specifying steps_per_epoch, and then making dataset repeat
             # itself.
-            history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks,
-                    steps_per_epoch=loader.num_patches, **kwargs)
+            history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
+                    steps_per_epoch=validation_frequency, **kwargs)
             if main_process and do_deep500:
                 tmr.complete_all()
                 tmr.print_all_time_stats()
@@ -634,7 +638,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
 
 
 def get_validation_frequency(config, loader):
-    validation_frequency = None
+    validation_frequency = loader.num_patches_per_file
     if "validation_frequency" in config["training"]:
         words = config["training"]["validation_frequency"].split(" ")
         if len(words) != 2:

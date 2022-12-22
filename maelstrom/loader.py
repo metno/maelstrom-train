@@ -941,6 +941,7 @@ class FileLoader(DataLoader):
 
     @tf.function
     def normalize_new(self, predictors, targets):
+        s_time = time.time()
         if self.coefficients_new is None:
             return predictors, targets
 
@@ -964,6 +965,7 @@ class FileLoader(DataLoader):
         p = tf.math.subtract(predictors, a)
         p = tf.math.divide(p, s)
 
+        self.logger.add("normalize", time.time() - s_time)
         return p, targets
 
     def get_extra_features_normalization(self, extra_features):

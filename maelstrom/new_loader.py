@@ -45,11 +45,11 @@ class Loader:
         y_range=None,
         probabilistic_target=False,
         normalization=None,
-        cache_size=None,
         patch_size=None,
         predict_diff=False,
         batch_size=1,
         prefetch=None,
+        cache=False,
         num_parallel_calls=None,
         extra_features=[],
         quick_metadata=True,
@@ -70,6 +70,7 @@ class Loader:
         self.predict_diff = predict_diff
         self.batch_size = batch_size
         self.prefetch = prefetch
+        self.cache = cache
         self.load_metadata(self.filenames[0])
         self.logger = maelstrom.timer.Timer("test.txt")
         self.normalization = normalization
@@ -142,6 +143,9 @@ class Loader:
 
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)
+
+        if self.cache:
+            dataset = dataset.cache()
 
         self.s_time = time.time()
         return dataset
