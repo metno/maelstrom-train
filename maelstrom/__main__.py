@@ -221,8 +221,8 @@ def main():
                 validation_frequency = get_validation_frequency(config, loader)
 
                 checkpoint_metric = 'loss'
-                """
                 if do_validation and main_process:
+                    """
                     callbacks += [
                         maelstrom.callback.Validation(
                             f"{output_folder}/{model_name}_val.txt",
@@ -232,8 +232,8 @@ def main():
                             logger,
                         )
                     ]
+                    """
                     checkpoint_metric = 'val_loss'
-                """
 
                 # Note that the ModelCheckpoint callback must be added after the validation
                 # callback, otherwise val_loss will not be recorded when the checkpoint callback is
@@ -269,13 +269,14 @@ def main():
 
         # This is the keras way of running validation. However, now we do validation via a
         # validation callback above instead.
-        if 1 and do_validation:
+        keras_epochs = epochs
+        if do_validation:
             kwargs = {"validation_data": dataset_val}
             print("EPOCH", epochs)
             print("NUM PATCHES", loader.num_patches)
             print("NUM PATCHES PER FILE", loader.num_patches_per_file)
             print("VALIDATION FREQUENCY", validation_frequency)
-            keras_epochs = epochs * loader.num_patches // validation_frequency
+            keras_epochs = int(epochs * loader.num_patches // (validation_frequency))
             print("Number of keras epochs", keras_epochs)
 
             if "steps_per_epoch" in config["training"]:
@@ -294,7 +295,7 @@ def main():
 
         if main_process and do_deep500:
             tmr = timer.CPUGPUTimer()
-            callbacks = [timer.TimerCallback(tmr, gpu=True)]
+            callbacks += [timer.TimerCallback(tmr, gpu=True)]
         # Note: We could add a check for num_trainable_parameters > 0
         # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
         # and skip training (this could be the raw model for example). However, we might still want
@@ -648,12 +649,12 @@ def get_validation_frequency(config, loader):
         freq, freq_units = words
         freq = int(freq)
         if freq_units == "epoch":
-            if freq == 1:
-                validation_frequency = None
-            else:
-                validation_frequency = (
-                    loader.num_patches_per_file * loader.num_files * freq
-                )
+            # if freq == 1:
+            #     validation_frequency = None
+            # else:
+            validation_frequency = (
+                loader.num_patches_per_file * loader.num_files * freq
+            )
         elif freq_units == "file":
             validation_frequency = loader.num_patches_per_file * freq
         elif freq_units == "batch":
