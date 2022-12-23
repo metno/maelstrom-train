@@ -15,8 +15,9 @@ class Test(unittest.TestCase):
                   "normalization": "test/files/normalization.yml",
                   "predict_diff": True,
                   "extra_features": [{"type": "x"}],
+                  "to_gpu": False,
                   }
-        loader = maelstrom.loader.get(config)
+        loader = maelstrom.new_loader.get(config)
 
         dataset = loader.get_dataset()
         count = 0
@@ -59,7 +60,7 @@ class Test(unittest.TestCase):
                   "patch_size": 2,
                   "extra_features": [{"type": "x"}],
                   }
-        loader = maelstrom.loader.get(config)
+        loader = maelstrom.new_loader.get(config)
 
         dataset = loader.get_dataset()
         count = 0
@@ -69,6 +70,7 @@ class Test(unittest.TestCase):
             self.assertEqual(p.shape, (1, 5, 2, 2, 15))
             self.assertEqual(t.shape, (1, 5, 2, 2, 1))
             tol = 5
+            print(count, p[0, 0, :, :, 14])
             if count == 3:
                 # predictor 4 is cloud_area_fraction
                 # ncdump -f c -v predictors 20200301T03Z.nc | grep "predictors(0,2,3,4)"

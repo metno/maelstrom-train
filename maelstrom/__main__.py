@@ -272,12 +272,12 @@ def main():
         keras_epochs = epochs
         if do_validation:
             kwargs = {"validation_data": dataset_val}
-            print("EPOCH", epochs)
-            print("NUM PATCHES", loader.num_patches)
-            print("NUM PATCHES PER FILE", loader.num_patches_per_file)
-            print("VALIDATION FREQUENCY", validation_frequency)
+            # print("EPOCH", epochs)
+            # print("NUM PATCHES", loader.num_patches)
+            # print("NUM PATCHES PER FILE", loader.num_patches_per_file)
+            # print("VALIDATION FREQUENCY", validation_frequency)
             keras_epochs = int(epochs * loader.num_patches // (validation_frequency))
-            print("Number of keras epochs", keras_epochs)
+            # print("Number of keras epochs", keras_epochs)
 
             if "steps_per_epoch" in config["training"]:
                 kwargs["steps_per_epoch"] = config["training"]["steps_per_epoch"]

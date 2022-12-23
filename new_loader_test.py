@@ -6,15 +6,16 @@ import tensorflow as tf
 
 config = {
           # "filenames": [ "data/air_temperature/5TB/2020030*T*Z.nc"],
-          "filenames": [ "data/air_temperature/5TB/2020030*T*Z.nc"],
+          "filenames": [ "data/air_temperature/5TB/20200*T*Z.nc"],
           # "filenames": [ "test/files/air_temperature/5GB/*T*Z.nc"],
           "normalization": "test/files/normalization.yml",
           "predict_diff": True,
           # "limit_predictors": ["air_temperature_2m", "precipitation_amount", "altitude"],
-          # "patch_size": 32,
+          "patch_size": 256,
           # "debug": True,
-          # "limit_leadtimes": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-          "extra_features": [{"type": "x"}, {"type": "x"}, {"type": "x"}],
+          "limit_leadtimes": [0, 1, 2],
+          # "extra_features": [{"type": "x"}, {"type": "x"}, {"type": "x"}],
+          # "prefetch": 1,
           }
 loader = maelstrom.new_loader.Loader(**config)
 
@@ -28,15 +29,22 @@ sys.exit()
 """
 
 # dataset = loader.get_dataset(tf.data.AUTOTUNE)
-dataset = loader.get_dataset(12)
+dataset = loader.get_dataset(num_parallel_calls=12)
+
+count = 0
+for sample in dataset:
+    # print(count)
+    maelstrom.util.print_memory_usage()
+    sys.exit()
+    count += 1
 
 s_time = time.time()
 count = 0
 first_time = None
-N = loader.num_patches
+N = loader.num_patches_per_file
 print(N)
 for sample in dataset:
-    print(sample[0].shape)
+    # print(sample[0].shape)
     file_index = count // N
     if count % N == 0:
         if file_index == 0:
