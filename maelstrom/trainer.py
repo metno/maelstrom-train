@@ -30,7 +30,7 @@ class Trainer:
         loss,
         steps=1,
         callbacks=[],
-        grad_type="median",
+        grad_type="mean",
         validation_frequency=1,
     ):
         """
@@ -50,9 +50,13 @@ class Trainer:
         self.grad_type = grad_type
         self.validation_frequency = validation_frequency
 
-    def fit(self, data, epochs, validation_data=None):
+    def fit(self, data, epochs, validation_data=None, callbacks=[], steps_per_epoch=1):
         logs = {}
-        self.callbacks.on_train_begin(logs=logs)
+        callback_list = tf.keras.callbacks.CallbackList(
+            callbacks, add_history=True, model=self.model
+        )
+
+        callback_list.on_train_begin(logs=logs)
         num_batches = None
 
         for epoch in range(epochs):
@@ -60,26 +64,33 @@ class Trainer:
             print(f"Epoch {epoch+1}/{epochs}")
             epoch_loss_avg = tf.keras.metrics.Mean()
 
-            self.callbacks.on_epoch_begin(epoch, logs=logs)
+            callback_list.on_epoch_begin(epoch, logs=logs)
 
             progbar = tf.keras.utils.Progbar(
                 num_batches
             )  # , stateful_metrics=['val_loss'])
+            e_time = time.time()
             for batch, (x, y) in enumerate(data):
+                s_time = time.time()
+                read_time = s_time - e_time 
                 # print(epoch, batch)
                 # self.callbacks.on_batch_begin(batch, logs=logs)
-                self.callbacks.on_train_batch_begin(batch, logs=logs)
+                callback_list.on_train_batch_begin(batch, logs=logs)
 
+                ss_time = time.time()
                 loss_value = self.train_step(x, y)
+                forward_time = time.time() - ss_time
 
                 # Moving window batch loss
+                ss_time = time.time()
                 epoch_loss_avg.update_state(loss_value)  # Add current batch loss
                 logs["loss"] = epoch_loss_avg.result()
+                backward_time = time.time() - ss_time
 
                 # Instantaneous batch loss
                 # logs["loss"] = loss_value
 
-                self.callbacks.on_train_batch_end(batch, logs=logs)
+                callback_list.on_train_batch_end(batch, logs=logs)
                 # self.callbacks.on_batch_end(batch, logs=logs)
                 values = [(k, v) for k, v in logs.items()]
 
@@ -93,6 +104,9 @@ class Trainer:
                 progbar.update(
                     batch + 1, values, finalize
                 )  # This will update the progress bar graph.
+                prev_e_time = e_time
+                e_time = time.time()
+                print(batch, read_time, forward_time, backward_time, e_time - prev_e_time, e_time - s_time)
             train_logs = logs
             num_batches = batch + 1
 
@@ -102,7 +116,7 @@ class Trainer:
                 count = 0
                 for batch, (x, y) in enumerate(validation_data):
                     # self.callbacks.on_batch_begin(batch, logs=logs)
-                    self.callbacks.on_test_batch_begin(batch, logs=logs)
+                    callback_list.on_test_batch_begin(batch, logs=logs)
 
                     # logs = self.test_step(x, y)
                     curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
@@ -113,7 +127,7 @@ class Trainer:
                             logs[k] += v
                     count += 1
 
-                    self.callbacks.on_test_batch_end(batch, logs=logs)
+                    callback_list.on_test_batch_end(batch, logs=logs)
                     # self.callbacks.on_batch_end(batch, logs=logs)
                 for k, v in logs.items():
                     val_logs["val_%s" % k] = v / count
@@ -125,8 +139,8 @@ class Trainer:
 
             e_time = time.time()
             # print(e_time - s_time, (e_time - s_time) / (batch + 1))
-            self.callbacks.on_epoch_end(epoch, val_logs)
-        self.callbacks.on_train_end()
+            callback_list.on_epoch_end(epoch, val_logs)
+        callback_list.on_train_end()
 
     def predict(self, dataset, **kwargs):
         return self.model.predict(dataset, **kwargs)
