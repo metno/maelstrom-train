@@ -1,4 +1,4 @@
-import maelstrom.new_loader
+import maelstrom.loader
 import numpy as np
 import time
 import sys
@@ -17,7 +17,7 @@ config = {
           # "extra_features": [{"type": "x"}, {"type": "x"}, {"type": "x"}],
           # "prefetch": 1,
           }
-loader = maelstrom.new_loader.Loader(**config)
+loader = maelstrom.loader.Loader(**config)
 
 """
 filename = "data/air_temperature/5TB/20200302T09Z.nc"
