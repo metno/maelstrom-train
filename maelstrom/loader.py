@@ -1,26 +1,18 @@
 import collections
-import copy
-import datetime
 import glob
-import gridpp
 import json
 import maelstrom
-import multiprocessing
 import netCDF4
-import numbers
 import numpy as np
-import os
-import re
-import sys
 import tensorflow as tf
 import time
-import tqdm
 import xarray as xr
 import yaml
 import math
 
 
 def get(config):
+    """Loader factory method"""
     kwargs = {k:v for k,v in config.items() if k != "type"}
     range_variables = ["x_range", "y_range", "limit_leadtimes"]
     # Process value arguments
@@ -37,13 +29,22 @@ def get(config):
     return Loader(**kwargs)
 
 def map_decorator(func):
+    """Decorator to wrap a function as a tf.py_function"""
     def wrapper(self, i, j):
-        # Use a tf.py_function to prevent auto-graph from compiling the method
-        # f = func(self)
         return tf.py_function(
                 lambda i, j: func(self, i, j),
                 inp=(i, j),
                 Tout=(tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator1(func):
+    """Decorator to wrap a function as a tf.py_function"""
+    def wrapper(self, i):
+        return tf.py_function(
+                lambda i: func(self, i),
+                inp=(i,),
+                Tout=(tf.uint32,)
                 )
     return wrapper
 
@@ -90,9 +91,11 @@ class Loader:
         self.normalization = normalization
         self.fake = fake
         self.num_parallel_calls = num_parallel_calls
+        self.count_reads = 0
+        self.count_start_processing = 0
+        self.count_done_processing = 0
 
         self.load_coefficients()
-        print(self.coefficients)
 
         self.timing = collections.defaultdict(lambda: 0)
         self.s_time = time.time()
@@ -102,16 +105,19 @@ class Loader:
             print(*args)
 
     def get_dataset(self, randomize_order=False, num_parallel_calls=1, repeat=None):
-        """Notes on strategies for loading data
+        """Sets up a tf.data object that streams data from disk
 
-        It doesn't really make sense to parallelize the reading across leadtimes, since we still
-        have to wait for all leadtimes to finish
+        Args:
+            randomize_order (bool): Randomize the order that data is retrieved in
+            num_parallel_calls (int): How many threads to process data with. Can also be
+                tf.data.AUTOTUNE
+            repeat (int): Repeat the dataset this many times
+
+        Returns:
+            tf.data: Dataset
         """
-
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
-
-        # num_parallel_calls = tf.data.AUTOTUNE
 
         # Get a list of numbers
         if randomize_order:
@@ -123,38 +129,44 @@ class Loader:
         if repeat is not None:
             dataset = dataset.repeat(repeat)
 
-        # Load the data from one file
+        # Load the data from file
         load_file = lambda i: tf.py_function(func=self.load_file, inp=[i], Tout=[tf.float32, tf.float32])
         dataset = dataset.map(load_file, num_parallel_calls=1)
-        # dataset = dataset.shuffle(buffer_size=1)
-        # dataset.take(1)
+        # Shape: (leadtime, y, x, predictor)
+
+        dataset = dataset.map(self.print_start_processing)
 
         # Split leadtime into samples
         if num_parallel_calls != tf.data.AUTOTUNE:
             dataset = dataset.unbatch()
             dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
+            # Shape: (1, y, x, predictor)
 
-        # Patch each leadtime
-        if 0:
+        if 1:
             dataset = dataset.map(self.process, num_parallel_calls=num_parallel_calls)
         else:
             dataset = dataset.map(self.extract_features, num_parallel_calls=num_parallel_calls)
             dataset = dataset.map(self.patch, num_parallel_calls=num_parallel_calls)
             dataset = dataset.map(self.diff, num_parallel_calls=num_parallel_calls)
             dataset = dataset.map(self.normalize, num_parallel_calls=num_parallel_calls)
+        # Shape: (1, patch, y_patch, x_patch, predictor)
 
         # Collect leadtimes
         if num_parallel_calls != tf.data.AUTOTUNE:
             dataset = dataset.unbatch()
             dataset = dataset.batch(self.num_leadtimes)
+            # Shape: (leadtime, patch, y_patch, x_patch, predictor)
 
         # Move patch into sample dimension
         dataset = dataset.map(self.reorder, num_parallel_calls=num_parallel_calls)
+        dataset = dataset.map(self.print_done_processing)
+        # Shape: (patch, leadtime, y_patch, x_patch, predictor)
 
         # Split patches into samples
         dataset = dataset.unbatch()
+        # Shape: (leadtime, y_patch, x_patch, predictor)
 
-        # Cache tensors on the CPU
+        # Cache tensors on the CPU (we don't want caching on GPU)
         if self.cache:
             dataset = dataset.cache()
 
@@ -164,15 +176,13 @@ class Loader:
 
         # Add sample dimension
         dataset = dataset.batch(self.batch_size)
+        # Shape: (batch_size, leadtime, y_patch, x_patch, predictor)
 
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)
 
         self.s_time = time.time()
         return dataset
-
-    def __getitem__(self, idx):
-        pass
 
     @property
     def predictor_shape(self):
@@ -333,23 +343,49 @@ class Loader:
         return p, t
 
     @map_decorator
+    def print_shape(self, p, t):
+        print(p.shape, t.shape)
+        return p, t
+
+    @map_decorator
+    def print_start_processing(self, p, t):
+        print("%.4f" % (time.time() - self.s_time), "Start processing", self.count_start_processing)
+        self.count_start_processing += 1
+        return p, t
+
+    @map_decorator
+    def print_done_processing(self, p, t):
+        print("%.4f" % (time.time() - self.s_time), "Done processing", self.count_done_processing)
+        self.count_done_processing += 1
+        return p, t
+
+    @map_decorator1
+    def print_start_time(self, p):
+        print("Start", p.numpy(), "%.4f" % (time.time() - self.s_time))
+        return p
+
+    @map_decorator
     def process(self, predictors, targets):
+        s_time = time.time()
         p, t = self.extract_features(predictors, targets)
         p, t = self.patch(p, t)
         p, t = self.diff(p, t)
         p, t = self.normalize(p, t)
+        # print("End process", time.time() - s_time)
         return p, t
 
     def load_file(self, index, leadtime_indices=None):
         s_time = time.time()
-        print("Loading", index.numpy(), self.filenames[index], time.time() - self.s_time)
-        self.debug("Loading", index)
+        print("%.4f" % (time.time() - self.s_time), "Start reading", index.numpy(), self.filenames[index])
         if self.fake:
             p, t = self.generate_fake_data(index)
         else:
             p, t = self.parse_file(self.filenames[index])
-        # print("Done loading", time.time() - self.s_time, time.time() - s_time)
+
+        print("%.4f" % (time.time() - self.s_time), "Done reading", index.numpy()) # , time.time() - s_time)
+
         # maelstrom.util.print_memory_usage()
+        self.count_reads += 1
         return p, t
 
         # Parallelize leadtimes
@@ -587,13 +623,9 @@ class Loader:
     def patch(self, predictors, targets):
         s_time = time.time()
         self.debug("Start patch", time.time() - self.s_time, predictors.shape)
-        # print("   Start patching", time.time() - self.s_time)
-        # p = predictors
-        # t = targets
 
         ps = self.patch_size
         if ps is None:
-            # self.debug("Done patching", time.time() - self.s_time)
             with tf.device("CPU:0"):
                 p, t = tf.expand_dims(predictors, 1),  tf.expand_dims(targets, 1)
             self.debug(p.device)
@@ -620,16 +652,10 @@ class Loader:
 
                 # Remove edge of domain to make it evenly divisible
                 a = a[:, :Y//ps * ps, :X//ps * ps, :]
-                # self.debug("   #1", time.time() - self.s_time)
 
                 a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
-                # self.debug("   #2", time.time() - self.s_time)
                 a = tf.expand_dims(a, 0)
-                # self.debug("   #3", time.time() - self.s_time)
                 a = tf.reshape(a, [LT, num_patches_y * num_patches_x, ps, ps, P])
-                # self.debug("   #4", time.time() - self.s_time)
-                # a = tf.transpose(a, [1, 0, 2, 3, 4])
-                # self.debug("   #5", time.time() - self.s_time)
                 return a
             else:
                 Y = a.shape[0]
@@ -644,7 +670,6 @@ class Loader:
 
                 a = tf.image.extract_patches(a, [1, ps, ps, 1], [1, ps, ps, 1], rates=[1, 1, 1, 1], padding="SAME")
                 a = tf.reshape(a, [num_patches_y * num_patches_x, ps, ps, P])
-                # a = tf.transpose(a, [1, 0, 2, 3, 4])
                 return a
 
         with tf.device("CPU:0"):
