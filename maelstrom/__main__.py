@@ -316,8 +316,9 @@ def main():
             if main_process and do_deep500:
                 tmr.complete_all()
                 tmr.print_all_time_stats()
-            if main_process:
-                model.load_weights(checkpoint_filepath)
+            # TODO: Enable this
+            # if main_process:
+            #     model.load_weights(checkpoint_filepath)
         else:
             history = None
 
@@ -661,7 +662,7 @@ def get_validation_frequency(config, loader):
             validation_frequency = freq
         else:
             raise ValueError(
-                f"Unknown validation frequency units '{frequency}'"
+                f"Unknown validation frequency units '{validation_frequency}'"
             )
     return validation_frequency
 
