@@ -40,11 +40,13 @@ def main():
     count = 0
     loader.start_time = s_time
     time_last_file = s_time
+    time_first_sample = None
     for k in dataset:
         curr_time = time.time() 
         if count == 0:
             # The first sample is avaiable
             agg_time = curr_time - s_time
+            time_first_sample = agg_time
             print(f"First sample ready:")
             print(f"   Tensor shape: {k[0].shape}")
             print(f"   Time: {agg_time:.2f}")
@@ -73,10 +75,15 @@ def main():
             time_last_file = curr_time
 
     total_time = time.time() - s_time
-    print(f"Total time: {total_time:.2f} s")
-    print(f"Performance: {loader.size_gb / total_time:.2f} GB/s")
-    print_gpu_usage("GPU memory: ")
-    print_cpu_usage("CPU memory: ")
+    print("")
+    print("Benchmark results:")
+    print(f"   Total time: {total_time:.2f} s")
+    print(f"   Number of files: {loader.num_files}")
+    print(f"   Time to first sample: {time_first_sample:.2f} s")
+    print(f"   Data amount: {loader.size_gb:2f} GB")
+    print(f"   Performance: {loader.size_gb / total_time:.2f} GB/s")
+    print_gpu_usage("   GPU memory: ")
+    print_cpu_usage("   CPU memory: ")
     print("")
     print("Timing breakdown:")
     for k,v in loader.timing.items():
@@ -441,6 +448,7 @@ class Ap1Loader:
 
     @map_decorator2_to_2
     def to_gpu(self, predictors, targets):
+        s_time = time.time()
         p = tf.convert_to_tensor(predictors)
         t = tf.convert_to_tensor(targets)
         self.timing["to_gpu"] += time.time() - s_time

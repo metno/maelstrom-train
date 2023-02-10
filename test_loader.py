@@ -35,7 +35,7 @@ def main():
                 patch_size=256, predict_diff=True, prefetch=1, batch_size=1,
                 num_parallel_calls=args.num_parallel_calls,
                 # fake=True,
-                limit_leadtimes=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+                # limit_leadtimes=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
                 normalization="data/air_temperature/normalization.yml",
                 extra_features=[{"type": "leadtime"}],
                 quick_metadata=True)
