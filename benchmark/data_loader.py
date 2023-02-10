@@ -79,6 +79,7 @@ def main():
     print("Benchmark results:")
     print(f"   Total time: {total_time:.2f} s")
     print(f"   Number of files: {loader.num_files}")
+    print(f"   Time per file: {total_time / loader.num_files:.2f}")
     print(f"   Time to first sample: {time_first_sample:.2f} s")
     print(f"   Data amount: {loader.size_gb:2f} GB")
     print(f"   Performance: {loader.size_gb / total_time:.2f} GB/s")
