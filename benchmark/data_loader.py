@@ -25,13 +25,14 @@ def main():
     parser.add_argument("-j", default=tf.data.AUTOTUNE, type=int, help="Number of parallel calls. If not specified, use tf.data.AUTOTUNE.", dest="num_parallel_calls")
     parser.add_argument('-p', default=256, type=int, help="Patch size in pixels (default 256)", dest="patch_size")
     parser.add_argument('-t', help="Rebatch all leadtimes in one sample", dest="with_leadtime", action="store_true")
+    parser.add_argument('-b', default=1, type=int, help="Batch size (default 1)", dest="batch_size")
     args = parser.parse_args()
 
     filenames = list()
     for f in args.files:
         filenames += glob.glob(f)
 
-    loader = Ap1Loader(filenames, args.patch_size, args.with_leadtime)
+    loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.with_leadtime)
     print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
 
@@ -54,9 +55,9 @@ def main():
             print_cpu_usage("   CPU memory: ")
         count += 1
 
-        if count % loader.num_samples_per_file == 0:
+        if count % loader.num_batches_per_file == 0:
             # We have processed a complete file
-            curr_file_index = count // loader.num_samples_per_file
+            curr_file_index = count // loader.num_batches_per_file
             print(f"Done {curr_file_index} files")
 
             this_time = time.time() - time_last_file
@@ -65,7 +66,7 @@ def main():
             print(f"   Curr performance: {this_size_gb / this_time:.2f} GB/s")
 
             agg_time = curr_time - s_time
-            agg_size_gb = loader.size_gb / loader.num_samples * count
+            agg_size_gb = loader.size_gb / loader.num_batches * count
             print(f"   Total time: {agg_time:.2f} ")
             print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
             print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
@@ -131,7 +132,7 @@ def map_decorator3_to_3(func):
     return wrapper
 
 class Ap1Loader:
-    def __init__(self, filenames, patch_size=16, with_leadtime=False):
+    def __init__(self, filenames, patch_size=16, batch_size=1, with_leadtime=False):
         self.filenames = filenames
         self.with_leadtime = with_leadtime
 
@@ -156,6 +157,8 @@ class Ap1Loader:
                 self.num_samples_per_file = num_x_patches * num_y_patches * self.num_leadtimes
             predictor_names = [i for i in dataset.variables["predictor"].values]
 
+        self.num_extra_features = 3
+
         # cache=False seems to have no effect
         self.data = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time") # , cache=False)
 
@@ -171,6 +174,7 @@ class Ap1Loader:
         self.normalize_factor = None
 
         self.start_time = time.time()
+        self.batch_size = batch_size
 
     def get_dataset(self, num_parallel_calls):
         """Returns a tf.data object"""
@@ -243,6 +247,8 @@ class Ap1Loader:
             dataset = dataset.batch(1)
             # Predictor shape: 1, 256, 256, 14
 
+        dataset = dataset.batch(self.batch_size)
+
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
         return dataset
@@ -305,12 +311,14 @@ class Ap1Loader:
         """Merges predictors, static_predictors, and two features"""
         s_time = time.time()
         # self.print("Start feature extraction")
+        features = [predictors, static_predictors]
         with tf.device(self.device):
             shape = list(predictors.shape[:-1]) + [1]
-            feature1 = np.zeros(shape, np.float32)
-            feature2 = np.zeros(shape, np.float32)
+            for f in range(self.num_extra_features):
+                feature = np.zeros(shape, np.float32)
+                features += [feature]
 
-            predictors = tf.concat((predictors, static_predictors, feature1, feature2), axis=-1)
+            predictors = tf.concat(features, axis=-1)
         # self.print("Done feature extraction")
         self.timing["feature"] += time.time() - s_time
         return predictors, targets
@@ -477,12 +485,33 @@ class Ap1Loader:
     def num_samples(self):
         return self.num_samples_per_file * self.num_files
 
+    @property
+    def num_batches(self):
+        return math.ceil(self.num_samples / self.batch_size)
+
+    @property
+    def num_batches_per_file(self):
+        return math.ceil(self.num_samples_per_file / self.batch_size)
+
+    @property
+    def batch_predictor_shape(self):
+        shape = [self.batch_size] + [i for i in self.predictor_shape]
+        if not self.with_leadtime:
+            shape[1] = 1
+        shape[2] = self.patch_size
+        shape[3] = self.patch_size
+        shape[-1] = self.predictor_shape[-1] + self.static_predictor_shape[-1] + self.num_extra_features
+        return shape
+
     def __str__(self):
         s = "Dataset properties:\n"
         s += f"   Number of files: {len(self.filenames)}\n"
         s += f"   Predictor shape: {self.predictor_shape}\n"
         s += f"   Static predictor shape: {self.static_predictor_shape}\n"
         s += f"   Target shape: {self.target_shape}\n"
+        s += f"   Batch tensor shape: {self.batch_predictor_shape}\n"
+        s += f"   Samples per file: {self.num_samples_per_file}\n"
+        s += f"   Batches per file: {self.num_batches_per_file}\n"
         s += f"   Dataset size: {self.size_gb:.2f} GB\n"
         return s
 
