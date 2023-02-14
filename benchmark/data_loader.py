@@ -77,6 +77,12 @@ def main():
 
     total_time = time.time() - s_time
     print("")
+    print("Benchmark configuration:")
+    print(f"   Batch size: {args.batch_size}")
+    print(f"   Patch size: {args.patch_size}")
+    print(f"   All leadtimes: {args.with_leadtime}")
+    print(f"   Num parallel_calls: {args.num_parallel_calls}")
+    print("")
     print("Benchmark results:")
     print(f"   Total time: {total_time:.2f} s")
     print(f"   Number of files: {loader.num_files}")
