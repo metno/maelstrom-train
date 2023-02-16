@@ -12,6 +12,10 @@ import xarray as xr
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
 
+with_horovod = "HOROVOD_RANK" in os.environ
+if with_horovod:
+    import horovod.tensorflow as hvd
+
 """ This script tests the performance of the Application 1 data loader
 
 Each file the data loader reads has predictors with dimensions (leadtime, y, x, predictor). This
@@ -23,17 +27,29 @@ def main():
     parser = argparse.ArgumentParser("Program that test the MAELSTROM AP1 data pipeline")
     parser.add_argument("files", help="Read data from these files (e.g. /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/2020030*.nc)", nargs="+")
     parser.add_argument("-j", default=tf.data.AUTOTUNE, type=int, help="Number of parallel calls. If not specified, use tf.data.AUTOTUNE.", dest="num_parallel_calls")
-    parser.add_argument('-p', default=256, type=int, help="Patch size in pixels (default 256)", dest="patch_size")
+    parser.add_argument('-p', default=None, type=int, help="Patch size in pixels (default 256)", dest="patch_size")
     parser.add_argument('-t', help="Rebatch all leadtimes in one sample", dest="with_leadtime", action="store_true")
     parser.add_argument('-b', default=1, type=int, help="Batch size (default 1)", dest="batch_size")
+    parser.add_argument('-c', help='Cache data to this filename', dest="filename_cache")
     args = parser.parse_args()
 
     filenames = list()
     for f in args.files:
         filenames += glob.glob(f)
 
-    loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.with_leadtime)
-    print(loader)
+    main_process = True
+    num_processes = 1
+    if with_horovod:
+        hvd.init()
+        main_process = hvd.rank() == 0
+        num_processes = hvd.size()
+        if len(filenames) % num_processes != 0 and main_process:
+            print(f"Warning number of files not divisible by {num_processes}")
+
+    loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.with_leadtime,
+            with_horovod, args.filename_cache)
+    if main_process:
+        print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
 
     # Load all the data
@@ -42,9 +58,11 @@ def main():
     loader.start_time = s_time
     time_last_file = s_time
     time_first_sample = None
+    loader_size_gb = loader.size_gb * num_processes
+    loader_num_files = loader.num_files * num_processes
     for k in dataset:
         curr_time = time.time() 
-        if count == 0:
+        if count == 0 and main_process:
             # The first sample is avaiable
             agg_time = curr_time - s_time
             time_first_sample = agg_time
@@ -55,47 +73,59 @@ def main():
             print_cpu_usage("   CPU memory: ")
         count += 1
 
-        if count % loader.num_batches_per_file == 0:
+        if count % loader.num_batches_per_file == 0 and main_process:
             # We have processed a complete file
             curr_file_index = count // loader.num_batches_per_file
             print(f"Done {curr_file_index} files")
 
             this_time = time.time() - time_last_file
-            this_size_gb = loader.size_gb / loader.num_files
+            this_size_gb = loader.size_gb / loader_num_files
             print(f"   Curr time: {this_time:.2f} s")
             print(f"   Curr performance: {this_size_gb / this_time:.2f} GB/s")
+            if with_horovod:
+                print(f"   Agg curr performance: {this_size_gb / this_time * num_processes:.2f} GB/s")
 
             agg_time = curr_time - s_time
             agg_size_gb = loader.size_gb / loader.num_batches * count
             print(f"   Total time: {agg_time:.2f} ")
             print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
             print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
+            if with_horovod:
+                print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
 
             print_gpu_usage("   GPU memory: ")
             print_cpu_usage("   CPU memory: ")
             time_last_file = curr_time
 
+    if with_horovod:
+        hvd.join()
     total_time = time.time() - s_time
-    print("")
-    print("Benchmark configuration:")
-    print(f"   Batch size: {args.batch_size}")
-    print(f"   Patch size: {args.patch_size}")
-    print(f"   All leadtimes: {args.with_leadtime}")
-    print(f"   Num parallel_calls: {args.num_parallel_calls}")
-    print("")
-    print("Benchmark results:")
-    print(f"   Total time: {total_time:.2f} s")
-    print(f"   Number of files: {loader.num_files}")
-    print(f"   Time per file: {total_time / loader.num_files:.2f}")
-    print(f"   Time to first sample: {time_first_sample:.2f} s")
-    print(f"   Data amount: {loader.size_gb:2f} GB")
-    print(f"   Performance: {loader.size_gb / total_time:.2f} GB/s")
-    print_gpu_usage("   GPU memory: ")
-    print_cpu_usage("   CPU memory: ")
-    print("")
-    print("Timing breakdown:")
-    for k,v in loader.timing.items():
-        print(f"   {k}: {v:.2f}")
+    if main_process:
+        print("")
+        print("Benchmark configuration:")
+        print(f"   Batch size: {args.batch_size}")
+        print(f"   Patch size: {args.patch_size}")
+        print(f"   All leadtimes: {args.with_leadtime}")
+        print(f"   Num parallel_calls: {args.num_parallel_calls}")
+        if with_horovod:
+            print(f"   Horovod proceses: {num_processes}")
+        print("")
+        print("Benchmark results:")
+        print(f"   Total time: {total_time:.2f} s")
+        print(f"   Number of files: {loader.num_files}")
+        print(f"   Time per file: {total_time / loader.num_files:.2f}")
+        print(f"   Time to first sample: {time_first_sample:.2f} s")
+        if with_horovod:
+            print(f"   Data amount / process: {loader.size_gb:2f} GB")
+            print(f"   Performance / process: {loader.size_gb / total_time:.2f} GB/s")
+        print(f"   Data amount: {loader_size_gb:2f} GB")
+        print(f"   Performance: {loader_size_gb / total_time:.2f} GB/s")
+        print_gpu_usage("   GPU memory: ")
+        print_cpu_usage("   CPU memory: ")
+        print("")
+        print("Timing breakdown:")
+        for k,v in loader.timing.items():
+            print(f"   {k}: {v:.2f}")
 
 def map_decorator1_to_3(func):
     """Decorator to wrap a 1-argument function as a tf.py_function"""
@@ -138,9 +168,18 @@ def map_decorator3_to_3(func):
     return wrapper
 
 class Ap1Loader:
-    def __init__(self, filenames, patch_size=16, batch_size=1, with_leadtime=False):
-        self.filenames = filenames
+    def __init__(self, filenames, patch_size=16, batch_size=1, with_leadtime=False, with_horovod=False, filename_cache=None):
+        self.with_horovod = with_horovod
+        if self.with_horovod:
+            start = hvd.rank() * math.ceil(len(filenames) // hvd.size())
+            end = (hvd.rank() + 1 ) * math.ceil(len(filenames) // hvd.size())
+            if end > len(filenames):
+                end = len(filenames)
+            self.filenames = [filenames[f] for f in range(start, end)]
+        else:
+            self.filenames = filenames
         self.with_leadtime = with_leadtime
+        self.filename_cache = filename_cache
 
         # Where should data reside during the processing steps? Processing seems faster on CPU,
         # perhaps because the pipeline stages can run in parallel better than on the GPU?
@@ -153,10 +192,14 @@ class Ap1Loader:
             self.static_predictor_shape = dataset.variables["static_predictors"].shape
             self.target_shape = dataset.variables["target_mean"].shape
             self.patch_size = patch_size
-            num_x_patches = self.predictor_shape[2] // self.patch_size
-            num_y_patches = self.predictor_shape[1] // self.patch_size
-            if self.patch_size > self.predictor_shape[1] or self.patch_size > self.predictor_shape[2]:
-                raise Exception("Cannot patch this grid. It is too small.")
+            if self.patch_size is None:
+                num_x_patches = 1
+                num_y_patches = 1
+            else:
+                num_x_patches = self.predictor_shape[2] // self.patch_size
+                num_y_patches = self.predictor_shape[1] // self.patch_size
+                if self.patch_size > self.predictor_shape[1] or self.patch_size > self.predictor_shape[2]:
+                    raise Exception("Cannot patch this grid. It is too small.")
             if self.with_leadtime:
                 self.num_samples_per_file = num_x_patches * num_y_patches
             else:
@@ -194,11 +237,14 @@ class Ap1Loader:
         #     predictors: 59, 2321, 1796, 8
         #     static_predictor: 2321, 1796, 6
         #     targets: 59, 2321, 1796, 1
+        # Set number of parallel calls to 1, so that the pipeline doesn't get too far ahead on the
+        # reading, causing the memory requirement to be large. The reading is not the bottleneck so
+        # we don't need to read multiple files in parallel.
         dataset = dataset.map(self.read, 1)
 
         # Broadcast static_predictors to leadtime dimension
-        dataset = dataset.map(self.expand_static_predictors, 1)
-        dataset = dataset.prefetch(2)
+        dataset = dataset.map(self.expand_static_predictors, num_parallel_calls)
+        # dataset = dataset.prefetch(4)
 
         # Unbatch the leadtime dimension, so that each leadtime can be processed in parallel
         dataset = dataset.unbatch()
@@ -255,8 +301,12 @@ class Ap1Loader:
 
         dataset = dataset.batch(self.batch_size)
 
+        if self.filename_cache is not None:
+            dataset = dataset.cache(self.filename_cache)
+
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
+        dataset = dataset.prefetch(1)
         return dataset
 
     """
@@ -341,7 +391,9 @@ class Ap1Loader:
                     new_predictors += [new_predictor]
                 predictors = tf.concat(new_predictors, axis=-1)
             else:
-                if self.normalize_add is None:
+                # Check for the existance of both vectors, since when this runs in parallel, the
+                # first vector may be available before the other
+                if self.normalize_add is None or self.normalize_factor is None:
                     # First time, compute the normalization coefficients, broadcast
                     # to the shape of the predictors tensor
                     add = list()
@@ -454,6 +506,8 @@ class Ap1Loader:
         Input: leadtime, patch, y, x, predictor
         Output: patch, leadtime, y, x, predictor
         """
+        if self.patch_size is None:
+            return predictors, targets
         s_time = time.time()
         with tf.device(self.device):
             p = tf.transpose(predictors, [1, 0, 2, 3, 4])
@@ -504,8 +558,9 @@ class Ap1Loader:
         shape = [self.batch_size] + [i for i in self.predictor_shape]
         if not self.with_leadtime:
             shape[1] = 1
-        shape[2] = self.patch_size
-        shape[3] = self.patch_size
+        if self.patch_size is not None:
+            shape[2] = self.patch_size
+            shape[3] = self.patch_size
         shape[-1] = self.predictor_shape[-1] + self.static_predictor_shape[-1] + self.num_extra_features
         return shape
 
