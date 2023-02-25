@@ -8,6 +8,7 @@ import psutil
 import resource
 import time
 import xarray as xr
+import yaml
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -25,18 +26,27 @@ tensor is of the size (59, 2321, 1796, 8). This needs to be processed such that 
 (leadtime, y_patch, x_patch, predictor), where y_patch and x_patch typically are 256.
 """
 
+# TODO: When repeating a dataset and the dataset size  doesn't divide evenly by the batch size, we
+# run out of data. We should really strive to make the benchmark divide evenly, otherwise it is hard
+# to analyse the results for the training.
+
 def main():
     parser = argparse.ArgumentParser("Program that test the MAELSTROM AP1 data pipeline")
     parser.add_argument("files", help="Read data from these files (e.g. /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/2020030*.nc)", nargs="+")
     parser.add_argument("-j", default=tf.data.AUTOTUNE, type=int, help="Number of parallel calls. If not specified, use tf.data.AUTOTUNE.", dest="num_parallel_calls")
-    parser.add_argument('-p', default=None, type=int, help="Patch size in pixels (default 256)", dest="patch_size")
+    parser.add_argument('-p', default=None, type=int, help="Patch size in pixels", dest="patch_size")
     parser.add_argument('-t', help="Rebatch all leadtimes in one sample", dest="with_leadtime", action="store_true")
     parser.add_argument('-b', default=1, type=int, help="Batch size (default 1)", dest="batch_size")
     parser.add_argument('-c', help='Cache data to this filename', dest="filename_cache")
     parser.add_argument('-e', default=1, type=int, help='Number of epochs', dest="epochs")
-    parser.add_argument('-m', default="train", help='Mode. One of load, train', dest="mode", choices=["load", "train"])
+    parser.add_argument('-m', default="train", help='Mode. One of load, train', dest="mode", choices=["load", "train", "infer"])
     parser.add_argument('--debug', help='Turn on debugging information', action="store_true")
+    parser.add_argument('--cpu', help='Limit execution to CPU', dest='cpu_only', action='store_true')
+    parser.add_argument('--norm', default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/normalization.yml", help='File with normalization information', dest='normalization')
     args = parser.parse_args()
+
+    if args.cpu_only:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
     filenames = list()
     for f in args.files:
@@ -56,7 +66,7 @@ def main():
         if len(filenames) % num_processes != 0 and main_process:
             print(f"Warning number of files not divisible by {num_processes}")
 
-    loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.with_leadtime,
+    loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
             with_horovod, args.epochs, args.filename_cache, args.debug)
     if main_process:
         print(loader)
@@ -83,51 +93,70 @@ def main():
                 average_aggregated_gradients=True)
         callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
         callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
-    model.compile(optimizer=optimizer, loss=loss)
     if main_process:
+        timing_callback = TimingCallback()
+        callbacks += [timing_callback]
+    model.compile(optimizer=optimizer, loss=loss)
+    if main_process and args.mode in ["train", "infer"]:
         model.summary()
 
     if args.mode == "train":
-        model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
+        ss_time = time.time()
+        history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
                 callbacks=callbacks, verbose=main_process)
-        return
-    
-    for k in dataset:
-        curr_time = time.time() 
-        if count == 0 and main_process:
-            # The first sample is avaiable
-            agg_time = curr_time - s_time
-            time_first_sample = agg_time
-            print(f"First sample ready:")
-            print(f"   Tensor shape: {k[0].shape}")
-            print(f"   Time: {agg_time:.2f}")
-            print_gpu_usage("   GPU memory: ")
-            print_cpu_usage("   CPU memory: ")
-        count += 1
+        training_time = time.time() - ss_time
+        time_first_sample = None
+    elif args.mode == "load":
+        for k in dataset:
+            curr_time = time.time()
+            if count == 0 and main_process:
+                # The first sample is avaiable
+                agg_time = curr_time - s_time
+                time_first_sample = agg_time
+                print(f"First sample ready:")
+                print(f"   Tensor shape: {k[0].shape}")
+                print(f"   Time: {agg_time:.2f}")
+                print_gpu_usage("   GPU memory: ")
+                print_cpu_usage("   CPU memory: ")
+            count += 1
 
-        if count % loader.num_batches_per_file == 0 and main_process:
-            # We have processed a complete file
-            curr_file_index = count // loader.num_batches_per_file
-            print(f"Done {curr_file_index} files")
+            if count % loader.num_batches_per_file == 0 and main_process:
+                # We have processed a complete file
+                curr_file_index = count // loader.num_batches_per_file
+                print(f"Done {curr_file_index} files")
 
-            this_time = time.time() - time_last_file
-            this_size_gb = loader.size_gb / loader_num_files
-            print(f"   Curr time: {this_time:.2f} s")
-            print(f"   Curr performance: {this_size_gb / this_time:.2f} GB/s")
-            if with_horovod:
-                print(f"   Agg curr performance: {this_size_gb / this_time * num_processes:.2f} GB/s")
+                this_time = time.time() - time_last_file
+                this_size_gb = loader.size_gb / loader_num_files
+                print(f"   Curr time: {this_time:.2f} s")
+                print(f"   Curr performance: {this_size_gb / this_time:.2f} GB/s")
+                if with_horovod:
+                    print(f"   Agg curr performance: {this_size_gb / this_time * num_processes:.2f} GB/s")
 
-            agg_time = curr_time - s_time
-            agg_size_gb = loader.size_gb / loader.num_batches * count
-            print(f"   Total time: {agg_time:.2f} ")
-            print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
-            print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
-            if with_horovod:
-                print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
+                agg_time = curr_time - s_time
+                agg_size_gb = loader.size_gb / loader.num_batches * count
+                print(f"   Acc time: {agg_time:.2f} ")
+                print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
+                print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
+                if with_horovod:
+                    print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
 
-            print_gpu_usage("   GPU memory: ")
-            print_cpu_usage("   CPU memory: ")
-            time_last_file = curr_time
+                print_gpu_usage("   GPU memory: ")
+                print_cpu_usage("   CPU memory: ")
+                time_last_file = curr_time
+    elif args.mode == "infer":
+        ss_time = time.time()
+        time_first_sample = None
+        if 0:
+            count = 0
+            for predictors, targets in dataset:
+                print(count)
+                if time_first_sample is None:
+                    time_first_sample = time.time()
+                    print("First: ", time_first_sample - ss_time)
+                q = model.predict_on_batch(predictors)
+                count += 1
+        q = model.predict(dataset, verbose=1)
+        print("Infer: ", time.time() - ss_time)
 
     if with_horovod:
         hvd.join()
@@ -141,12 +170,15 @@ def main():
         print(f"   Num parallel_calls: {args.num_parallel_calls}")
         if with_horovod:
             print(f"   Horovod proceses: {num_processes}")
+        if args.mode == "train":
+            print(f"   Num epochs: {args.epochs}")
         print("")
         print("Benchmark results:")
         print(f"   Total time: {total_time:.2f} s")
         print(f"   Number of files: {loader.num_files}")
         print(f"   Time per file: {total_time / loader.num_files:.2f}")
-        print(f"   Time to first sample: {time_first_sample:.2f} s")
+        if time_first_sample is not None:
+            print(f"   Time to first sample: {time_first_sample:.2f} s")
         if with_horovod:
             print(f"   Data amount / process: {loader.size_gb:2f} GB")
             print(f"   Performance / process: {loader.size_gb / total_time:.2f} GB/s")
@@ -154,10 +186,35 @@ def main():
         print(f"   Performance: {loader_size_gb / total_time:.2f} GB/s")
         print_gpu_usage("   GPU memory: ")
         print_cpu_usage("   CPU memory: ")
+
         print("")
-        print("Timing breakdown:")
-        for k,v in loader.timing.items():
-            print(f"   {k}: {v:.2f}")
+        if args.mode == "train":
+            print("Training performance:")
+            # for key, value in history.history.items():
+            #     print(key, value)
+            times = timing_callback.get_epoch_times()
+            print(f"   Total runtime: {total_time:.2f} s")
+            print(f"   Total training time: {training_time:.2f} s")
+            print(f"   Average performance: {loader_size_gb / training_time:.2f} GB/s")
+            print(f"   First epoch time: {times[0]:.2f} s")
+            print(f"   Min epoch time: {np.min(times):.2f} s")
+            print(f"   Performance min epoch: {loader_size_gb / np.min(times):.2f} GB/s")
+            print(f"   Mean epoch time: {np.mean(times):.2f} s")
+            print(f"   Performance mean epoch: {loader_size_gb / np.mean(times):.2f} GB/s")
+            print(f"   Max epoch time: {np.max(times):.2f} s")
+            print(f"   Performance max epoch: {loader_size_gb / np.max(times):.2f} GB/s")
+            print(f"   Final loss: {history.history['loss'][-1]:.2f}")
+            print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            # for i, curr_time in enumerate():
+            #     print("   Epoch {i} {curr_time}")
+        elif args.mode == "load":
+            print("Data loading performance:")
+            print(f"   Total runtime: {total_time:.2f} s")
+            print(f"   Average performance: {loader_size_gb / total_time:.2f} GB/s")
+            print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            for k,v in loader.timing.items():
+                print(f"   {k}: {v:.2f}")
+
 
 def map_decorator1_to_3(func):
     """Decorator to wrap a 1-argument function as a tf.py_function"""
@@ -203,7 +260,7 @@ def map_decorator3_to_3(func):
 Data loader
 """
 class Ap1Loader:
-    def __init__(self, filenames, patch_size=16, batch_size=1, with_leadtime=False,
+    def __init__(self, filenames, patch_size, batch_size, filename_normalization, with_leadtime=False,
             with_horovod=False, repeat=None, filename_cache=None, debug=True):
         self.with_horovod = with_horovod
         if self.with_horovod:
@@ -219,6 +276,7 @@ class Ap1Loader:
         self.with_leadtime = with_leadtime
         self.repeat = repeat
         self.filename_cache = filename_cache
+        self.filename_normalization = filename_normalization
         self.debug = debug
 
         # Where should data reside during the processing steps? Processing seems faster on CPU,
@@ -244,9 +302,13 @@ class Ap1Loader:
                 self.num_samples_per_file = num_x_patches * num_y_patches
             else:
                 self.num_samples_per_file = num_x_patches * num_y_patches * self.num_leadtimes
-            predictor_names = [i for i in dataset.variables["predictor"].values]
+            self.num_patches_per_file = num_x_patches * num_y_patches
+            self.predictor_names = [i for i in dataset.variables["predictor"].values]
+            self.predictor_names += [i for i in dataset.variables["static_predictor"].values]
 
-        self.num_extra_features = 3
+        self.extra_predictor_names = ["x", "y", "leadtime"]
+        self.num_extra_features = len(self.extra_predictor_names)
+        self.predictor_names += self.extra_predictor_names
 
         # cache=False seems to have no effect
         self.data = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time") # , cache=False)
@@ -255,7 +317,7 @@ class Ap1Loader:
         self.timing = collections.defaultdict(lambda: 0)
 
         # The name of the raw forecast predictor, used to subtract the target
-        self.raw_predictor_index = predictor_names.index("air_temperature_2m")
+        self.raw_predictor_index = self.predictor_names.index("air_temperature_2m")
         self.create_fake_data = False
 
         # Cache the normalization coefficients
@@ -436,21 +498,47 @@ class Ap1Loader:
                 # Check for the existance of both vectors, since when this runs in parallel, the
                 # first vector may be available before the other
                 if self.normalize_add is None or self.normalize_factor is None:
-                    # First time, compute the normalization coefficients, broadcast
-                    # to the shape of the predictors tensor
-                    add = list()
-                    factor = list()
-                    for p in range(predictors.shape[-1]):
-                        curr = tf.expand_dims((0 * predictors[..., p]), -1)
-                        add += [curr + 1]
-                        factor += [curr + 0.5]
-                    self.normalize_add = tf.concat(add, axis=-1)
-                    self.normalize_factor = tf.concat(add, axis=-1)
+                    coefficients = self.read_normalization()
+                    a = coefficients[:, 0]
+                    s = coefficients[:, 1]
+                    shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
 
-                predictors = predictors + self.normalize_add
-                predictors = predictors * self.normalize_factor
+                    def expand_array(a, shape):
+                        """Expands array a so that it has the shape"""
+                        if len(a.shape) == 5:
+                            # Use if unbatch has not been run
+                            a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
+                        else:
+                            a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
+                        a = tf.tile(a, shape)
+                        return a
+
+                    self.normalize_add = expand_array(a, shape)
+                    self.normalize_factor = expand_array(s, shape)
+
+                predictors = predictors - self.normalize_add
+                predictors = predictors / self.normalize_factor
+
         self.timing["normalize"] += time.time() - s_time
         return predictors, targets
+
+    def read_normalization(self):
+        coefficients = np.zeros([self.num_predictors, 2], np.float32)
+        coefficients[:, 1] = 1
+        with open(self.filename_normalization) as file:
+            data = yaml.load(file, Loader=yaml.SafeLoader)
+            # Add normalization information for the extra features
+            data["x"] = (1000, 100)
+            data["y"] = (1000, 100)
+            data["leadtime"] = (30, 10)
+
+            for i, name in enumerate(self.predictor_names):
+                if name in data:
+                    coefficients[i, :] = data[name]
+                else:
+                    coefficients[i, :] = [0, 1]
+        return coefficients
+
 
     @map_decorator2_to_2
     def patch(self, predictors, targets):
@@ -597,6 +685,10 @@ class Ap1Loader:
         return math.ceil(self.num_samples_per_file / self.batch_size)
 
     @property
+    def num_predictors(self):
+        return len(self.predictor_names)
+
+    @property
     def batch_predictor_shape(self):
         shape = [self.batch_size] + [i for i in self.predictor_shape]
         if not self.with_leadtime:
@@ -615,6 +707,8 @@ class Ap1Loader:
         s += f"   Static predictor shape: {self.static_predictor_shape}\n"
         s += f"   Target shape: {self.target_shape}\n"
         s += f"   Batch tensor shape: {self.batch_predictor_shape}\n"
+        s += f"   Patch size: {self.patch_size}\n"
+        s += f"   Patches per file: {self.num_patches_per_file}\n"
         s += f"   Samples per file: {self.num_samples_per_file}\n"
         s += f"   Batches per file: {self.num_batches_per_file}\n"
         s += f"   Batch size: {self.size_gb / self.num_batches * 1024:.2f} MB\n"
@@ -628,8 +722,11 @@ def get_num_parallel_calls(num_parallel_calls):
         return int(num_parallel_calls)
 
 def print_gpu_usage(message="", show_line=False):
-    usage = tf.config.experimental.get_memory_info("GPU:0")
-    output = message + ' - '.join([f"{k}: {v / 1024**3:.2f} GB" for k,v in usage.items()])
+    try:
+        usage = tf.config.experimental.get_memory_info("GPU:0")
+        output = message + ' - '.join([f"{k}: {v / 1024**3:.2f} GB" for k,v in usage.items()])
+    except ValueError as e:
+        output = message + ' None'
 
     if show_line:
         frameinfo = inspect.getouterframes(inspect.currentframe())[1]
@@ -675,6 +772,34 @@ def set_gpu_memory_growth():
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
 
+class TimingCallback(tf.keras.callbacks.Callback):
+    def __init__(self):
+        self.times = []
+        self.s_time = time.time()
+        self.start_times = dict()
+        self.end_times = dict()
+
+    def on_epoch_begin(self, epoch, logs = {}):
+        print("Adding epoch", epoch)
+        self.start_times[epoch] = time.time()
+
+    def on_epoch_end(self,epoch,logs = {}):
+        self.end_times[epoch] = time.time()
+        self.times.append(time.time() - self.s_time)
+
+    def get_epoch_times(self):
+        times = list()
+        keys = list(self.start_times.keys())
+        keys.sort()
+        for key in keys:
+            if key not in self.end_times:
+                print(f"WARNING: Did not find epoch={key} in end times")
+                continue
+            times += [self.end_times[key] - self.start_times[key]]
+        return times
+
+    # def on_train_end(self,logs = {}):
+
 """
 ML model
 """
@@ -701,7 +826,7 @@ class Unet(keras.Model):
         if upsampling_type not in ["upsampling", "conv_transpose"]:
             raise ValueError(f"Unknown upsampling type {upsampling_type}")
 
-        print(f"Initializing a U-Net with shape {input_shape}")
+        # print(f"Initializing a U-Net with shape {input_shape}")
 
         self._num_outputs = num_outputs
         self._features = features
@@ -724,7 +849,6 @@ class Unet(keras.Model):
 
         pool_size = [1, self._pool_size, self._pool_size]
         hood_size = [1, self._conv_size, self._conv_size]
-        print(inputs.shape)
 
         Conv = keras.layers.Conv3D
         if self._upsampling_type == "upsampling":
