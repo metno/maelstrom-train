@@ -1,0 +1,253 @@
+name:    ap1-all
+outpath: ap1_run
+comment: MAELSTROM AP1 benchmark jube script
+
+parameterset:
+  - name: appParameters
+    parameter:
+      - name: datadir
+        type: string
+        _: "/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datasize
+        type: string
+        _: 5TB
+        tag: "!test"
+      - name: datasize
+        type: string
+        _: 5GB
+        tag: test
+      - name: outdir
+        type: string
+        _: "$jube_wp_abspath/output_model"
+      - name: program
+        type: string
+        _: $jube_benchmark_home/../benchmark/benchmark.py
+      - name: input_files
+        type: string
+        _: ${datadir}/${datasize}/202???01T*.nc
+      - name: batch_size
+        type: int
+        _: 10
+      - name: patch_size
+        type: int
+        _: 512
+        tag: "!test"
+      - name: patch_size
+        type: int
+        _: 32
+        tag: test
+      - name: num_procs
+        type: int
+        _: 12
+      - name: experiment
+        type: int
+        _: 0
+  - name: trainParameters
+    parameter:
+      - name: mode
+        type: string
+        _: train
+      - name: nepochs
+        type: int
+        _: 1
+      - name: program_args
+        type: string
+        _: "-m train -b ${batch_size} -p ${patch_size} -j ${num_procs} -e ${nepochs}"
+  - name: loadParameters
+    parameter:
+      - name: mode
+        type: string
+        _: load
+      - name: program_args
+        type: string
+        _: "-m load -b ${batch_size} -p ${patch_size} -j ${num_procs}"
+  - name: globalParameter
+    parameter:
+      - name: modules
+        tag: "jwb|jwc"
+        separator: |
+        _: 
+          module load Stages/2022 &&
+          module load GCC/11.2.0 &&
+          module load ParaStationMPI/5.5.0-1 &&
+          module load mpi4py/3.1.3 &&
+          module load netcdf4-python/1.5.7-serial &&
+          module load SciPy-bundle/2021.10 &&
+          module load xarray/0.20.1 &&
+          module load dask/2021.9.1 &&
+          module load TensorFlow/2.6.0-CUDA-11.5 &&
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate
+      - name: systemname
+        tag: jwc
+        _: jwc
+      - name: systemname
+        tag: jwb
+        _: jwb
+  - name: executeset
+    init_with: platform.xml
+  - name: systemParameter
+    init_with: platform.xml
+    parameter:
+      - name: preprocess
+        mode: text
+        separator: |
+        _:
+          $modules;
+      - name: threadspertask
+        _: 24
+      - name: nodes
+        _: 1
+      - name: n_gpu
+        _: 4
+      - name: taskspernode
+        _: 1
+      - name: timelimit
+        _: "01:00:00"
+      - name: account
+        _: deepacf
+      - name: queue
+        tag: jwb+!test
+        _: booster
+      - name: queue
+        tag: jwb+test
+        _: develbooster
+      - name: queue
+        tag: jwc+!test
+        _: gpus
+      - name: queue
+        tag: jwc+test
+        _: develgpus
+      - name: gres
+        _: gpu:$n_gpu
+      - name: executable
+        _: python -u ${program}
+      - name: args_exec
+        mode: text
+        _: > 
+          ${input_files}
+          ${program_args}
+
+patternset:
+   - name: perf_patterns
+     pattern:
+      - {name: jobid, type: int, _: "Submitted batch job $jube_pat_int" }
+      - {name: training_time, type: float, _: "Total training time: ${jube_pat_fp} s"}
+      - {name: total_time, type: float, _: "Total runtime: ${jube_pat_fp} s"}
+      - {name: epoch_time_first, type: float, _: "First epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_min, type: float, _: "Min epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_avg, type: float, _: "Mean epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_max, type: float, _: "Max epoch time: $jube_pat_fp s"}
+      - {name: batch_time_avg, type: float, _: "Average time per batch: $jube_pat_fp s"}
+      - {name: loss, type: float, _: "Final loss:\\s+$jube_pat_fp"}
+      - {name: performance, type: float, _: "Average performance:\\s+$jube_pat_fp GB/s"}
+
+analyser:
+    - name: analyse_train
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: train
+        file:
+            - stdout
+            - job.out
+    - name: analyse_load
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: load
+        file:
+            - stdout
+            - job.out
+           
+
+result:
+    - use: analyse_train
+      table:
+        name: result
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "JobID", _: jobid}
+          - {title: "Experiment", _: experiment}
+          - {title: "batch size", _: batch_size}
+          - {title: "patch size", _: patch_size}
+          - {title: "mode", _: mode}
+          - {title: "num parallel", _: num_procs}
+          - {title: "# epochs", _: nepochs}
+          - {title: "# nodes", _: nodes}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "# gpu", _: n_gpu}
+          - {title: "Total runtime", _: total_time}
+          - {title: "Training time", _: training_time}
+          - {title: "avg. epoch time [s]", _: epoch_time_avg}
+          - {title: "first epoch time [s]", _: epoch_time_first}
+          - {title: "min epoch time [s]", _: epoch_time_min}
+          - {title: "max epoch time [s]", _: epoch_time_max}
+          - {title: "avg. batch time [s]", _: batch_time_avg}
+          - {title: "loss", _: loss}
+          - {title: "performance [GB/s]", _: performance}
+    - use: analyse_load
+      table:
+        name: result_load
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "JobID", _: jobid}
+          - {title: "Experiment", _: experiment}
+          - {title: "batch size", _: batch_size}
+          - {title: "patch size", _: patch_size}
+          - {title: "mode", _: mode}
+          - {title: "num parallel", _: num_procs}
+          - {title: "# nodes", _: nodes}
+          - {title: "Total runtime", _: total_time}
+          - {title: "avg. batch time [s]", _: batch_time_avg}
+          - {title: "performance [GB/s]", _: performance}
+
+step:
+  - name: setup_venv
+    use:
+      - globalParameter
+      - systemParameter
+    do:
+      _:
+        $modules;
+        cd $jube_benchmark_home/../setup_env/ &&
+        source ./setup_${systemname}.sh
+  - name: train
+    use:
+      - appParameters
+      - trainParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _:
+        $modules;
+        $submit $submit_script
+        # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+        # python ${program} ${input_files} ${program_args}
+  - name: load
+    use:
+      - appParameters
+      - loadParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _:
+        $modules;
+        $submit $submit_script
+        # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+        # python ${program} ${input_files} ${program_args}
