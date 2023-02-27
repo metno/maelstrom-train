@@ -33,13 +33,14 @@ tensor is of the size (59, 2321, 1796, 8). This needs to be processed such that 
 def main():
     parser = argparse.ArgumentParser("Program that test the MAELSTROM AP1 data pipeline")
     parser.add_argument("files", help="Read data from these files (e.g. /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/2020030*.nc)", nargs="+")
-    parser.add_argument("-j", default=tf.data.AUTOTUNE, type=int, help="Number of parallel calls. If not specified, use tf.data.AUTOTUNE.", dest="num_parallel_calls")
+    parser.add_argument("-j", default=tf.data.AUTOTUNE, type=parse_num_parallel_calls, help="Number of parallel calls. If not specified, use tf.data.AUTOTUNE.", dest="num_parallel_calls")
     parser.add_argument('-p', default=None, type=int, help="Patch size in pixels", dest="patch_size")
     parser.add_argument('-t', help="Rebatch all leadtimes in one sample", dest="with_leadtime", action="store_true")
     parser.add_argument('-b', default=1, type=int, help="Batch size (default 1)", dest="batch_size")
     parser.add_argument('-c', help='Cache data to this filename', dest="filename_cache")
     parser.add_argument('-e', default=1, type=int, help='Number of epochs', dest="epochs")
     parser.add_argument('-m', default="train", help='Mode. One of load, train', dest="mode", choices=["load", "train", "infer"])
+    parser.add_argument('-val', help='Filenames used for validation', dest="validation_files", nargs="*")
     parser.add_argument('--debug', help='Turn on debugging information', action="store_true")
     parser.add_argument('--cpu', help='Limit execution to CPU', dest='cpu_only', action='store_true')
     parser.add_argument('--norm', default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/normalization.yml", help='File with normalization information', dest='normalization')
@@ -67,7 +68,7 @@ def main():
             print(f"Warning number of files not divisible by {num_processes}")
 
     loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-            with_horovod, args.epochs, args.filename_cache, args.debug)
+            with_horovod, args.epochs, args.filename_cache, False, args.debug)
     if main_process:
         print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
@@ -102,8 +103,19 @@ def main():
 
     if args.mode == "train":
         ss_time = time.time()
+        kwargs = dict()
+        if args.validation_files is not None:
+
+            val_filenames = list()
+            for f in args.validation_files:
+                val_filenames += glob.glob(f)
+
+            val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
+                    0, 1, args.filename_cache, True, args.debug)
+            val_dataset = val_loader.get_dataset(args.num_parallel_calls).shard(hvd.size(), hvd.rank())
+            kwargs["validation_data"] = val_dataset
         history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
-                callbacks=callbacks, verbose=main_process)
+                callbacks=callbacks, verbose=main_process, **kwargs)
         training_time = time.time() - ss_time
         time_first_sample = None
     elif args.mode == "load":
@@ -195,7 +207,7 @@ def main():
             times = timing_callback.get_epoch_times()
             print(f"   Total runtime: {total_time:.2f} s")
             print(f"   Total training time: {training_time:.2f} s")
-            print(f"   Average performance: {loader_size_gb / training_time:.2f} GB/s")
+            print(f"   Average performance: {loader_size_gb / training_time * args.epochs:.2f} GB/s")
             print(f"   First epoch time: {times[0]:.2f} s")
             print(f"   Min epoch time: {np.min(times):.2f} s")
             print(f"   Performance min epoch: {loader_size_gb / np.min(times):.2f} GB/s")
@@ -203,15 +215,21 @@ def main():
             print(f"   Performance mean epoch: {loader_size_gb / np.mean(times):.2f} GB/s")
             print(f"   Max epoch time: {np.max(times):.2f} s")
             print(f"   Performance max epoch: {loader_size_gb / np.max(times):.2f} GB/s")
-            print(f"   Final loss: {history.history['loss'][-1]:.2f}")
+            print(f"   Final loss: {history.history['loss'][-1]:.3f}")
+            if args.validation_files is not None:
+                print(f"   Final val loss: {history.history['val_loss'][-1]:.3f}")
             print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            print_gpu_usage("   Final GPU memory: ")
+            print_cpu_usage("   Final CPU memory: ")
             # for i, curr_time in enumerate():
             #     print("   Epoch {i} {curr_time}")
         elif args.mode == "load":
             print("Data loading performance:")
             print(f"   Total runtime: {total_time:.2f} s")
-            print(f"   Average performance: {loader_size_gb / total_time:.2f} GB/s")
+            print(f"   Average performance: {loader_size_gb / total_time * args.epochs:.2f} GB/s")
             print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            print_gpu_usage("   Final GPU memory: ")
+            print_cpu_usage("   Final CPU memory: ")
             for k,v in loader.timing.items():
                 print(f"   {k}: {v:.2f}")
 
@@ -261,7 +279,7 @@ Data loader
 """
 class Ap1Loader:
     def __init__(self, filenames, patch_size, batch_size, filename_normalization, with_leadtime=False,
-            with_horovod=False, repeat=None, filename_cache=None, debug=True):
+            with_horovod=False, repeat=None, filename_cache=None, in_memory_cache=False, debug=True):
         self.with_horovod = with_horovod
         if self.with_horovod:
             if len(filenames) == 0:
@@ -273,10 +291,11 @@ class Ap1Loader:
             self.filenames = [filenames[f] for f in range(start, end)]
         else:
             self.filenames = filenames
+        self.filename_normalization = filename_normalization
         self.with_leadtime = with_leadtime
         self.repeat = repeat
         self.filename_cache = filename_cache
-        self.filename_normalization = filename_normalization
+        self.in_memory_cache = in_memory_cache
         self.debug = debug
 
         # Where should data reside during the processing steps? Processing seems faster on CPU,
@@ -407,6 +426,10 @@ class Ap1Loader:
 
         if self.filename_cache is not None:
             dataset = dataset.cache(self.filename_cache)
+
+        if self.in_memory_cache:
+            dataset = dataset.cache()
+
 
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
@@ -741,7 +764,7 @@ def print_cpu_usage(message="", show_line=False):
         show_line (bool): Add the file and line number making this call at the end of message
     """
 
-    output = "current: %.2f GB - max: %.2f GB" % (
+    output = "current: %.2f GB - peak: %.2f GB" % (
         get_memory_usage() / 1024 ** 3,
         get_max_memory_usage() / 1024 ** 3,
     )
@@ -911,6 +934,11 @@ def quantile_score(y_true, y_pred):
         qtloss += (quantile - tf.cast((err < 0), tf.float32)) * err
     return K.mean(qtloss) / len(quantiles)
 
+def parse_num_parallel_calls(string):
+    if string == "autotune":
+        return tf.data.AUTOTUNE
+    else:
+        return int(string)
 
 if __name__ == "__main__":
     main()
