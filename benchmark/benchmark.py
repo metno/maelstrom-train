@@ -58,6 +58,7 @@ def main():
     if with_horovod:
         gpus = tf.config.experimental.list_physical_devices("GPU")
         hvd.init()
+        print(hvd.rank(), hvd.size())
         print("Num GPUs Available: ", len(gpus))
         if len(gpus) == 0:
             raise Exception("No GPUs available")
@@ -69,7 +70,7 @@ def main():
 
     # Let the Loader do the sharding, because then we can shard using different filenames
     loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-            with_horovod, args.epochs, args.filename_cache, False, args.debug)
+            with_horovod, args.epochs, args.filename_cache, args.debug)
     if main_process:
         print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
@@ -117,10 +118,11 @@ def main():
             # Do sharding on the dataset, instead of in the loader, since we might not have enough
             # files to support sharding into the number of processes
             val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-                    False, 1, args.filename_cache, True, args.debug)
+                    0 and with_horovod, 1, args.filename_cache, args.debug)
             val_dataset = val_loader.get_dataset(args.num_parallel_calls)
             if with_horovod:
                 val_dataset = val_dataset.shard(hvd.size(), hvd.rank())
+                val_dataset = val_dataset.cache()
             kwargs["validation_data"] = val_dataset
         history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
                 callbacks=callbacks, verbose=main_process, **kwargs)
@@ -287,7 +289,7 @@ Data loader
 """
 class Ap1Loader:
     def __init__(self, filenames, patch_size, batch_size, filename_normalization, with_leadtime=False,
-            with_horovod=False, repeat=None, filename_cache=None, in_memory_cache=False, debug=True):
+            with_horovod=False, repeat=None, filename_cache=None, debug=True):
         self.with_horovod = with_horovod
         if self.with_horovod:
             if len(filenames) == 0:
@@ -297,13 +299,14 @@ class Ap1Loader:
             if end > len(filenames):
                 end = len(filenames)
             self.filenames = [filenames[f] for f in range(start, end)]
+            if len(self.filenames) == 0:
+                raise Exception(f"Too few files ({len(filenames)}) to divide into {hvd.size()} processes")
         else:
             self.filenames = filenames
         self.filename_normalization = filename_normalization
         self.with_leadtime = with_leadtime
         self.repeat = repeat
         self.filename_cache = filename_cache
-        self.in_memory_cache = in_memory_cache
         self.debug = debug
 
         # Where should data reside during the processing steps? Processing seems faster on CPU,
@@ -434,10 +437,6 @@ class Ap1Loader:
 
         if self.filename_cache is not None:
             dataset = dataset.cache(self.filename_cache)
-
-        if self.in_memory_cache:
-            dataset = dataset.cache()
-
 
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
