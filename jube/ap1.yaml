@@ -1,5 +1,5 @@
-name:    ap1-all
-outpath: ap1_run
+name:    ap1
+outpath: ap1
 comment: MAELSTROM AP1 benchmark jube script
 
 parameterset:
@@ -25,9 +25,17 @@ parameterset:
       - name: input_files
         type: string
         _: ${datadir}/${datasize}/202???01T*.nc
+      - name: num_procs
+        type: int
+        _: 1,2,4
       - name: batch_size
         type: int
-        _: 10
+        _: 1
+        tag: "test"
+      - name: batch_size
+        type: int
+        _: 72
+        tag: "!test"
       - name: patch_size
         type: int
         _: 512
@@ -36,12 +44,12 @@ parameterset:
         type: int
         _: 32
         tag: test
-      - name: num_procs
+      - name: num_parallel_calls
         type: int
         _: 12
       - name: experiment
         type: int
-        _: 0
+        _: 0 # ,1,2
   - name: trainParameters
     parameter:
       - name: mode
@@ -49,10 +57,13 @@ parameterset:
         _: train
       - name: nepochs
         type: int
-        _: 1
+        _: 3
+      - name: validation_files
+        type: string
+        _ : ${datadir}/${datasize}/20200615T*.nc
       - name: program_args
         type: string
-        _: "-m train -b ${batch_size} -p ${patch_size} -j ${num_procs} -e ${nepochs}"
+        _: "-m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files}"
   - name: loadParameters
     parameter:
       - name: mode
@@ -60,7 +71,7 @@ parameterset:
         _: load
       - name: program_args
         type: string
-        _: "-m load -b ${batch_size} -p ${patch_size} -j ${num_procs}"
+        _: "-m load -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls}"
   - name: globalParameter
     parameter:
       - name: modules
@@ -68,14 +79,12 @@ parameterset:
         separator: |
         _: 
           module load Stages/2022 &&
-          module load GCC/11.2.0 &&
-          module load ParaStationMPI/5.5.0-1 &&
-          module load mpi4py/3.1.3 &&
-          module load netcdf4-python/1.5.7-serial &&
-          module load SciPy-bundle/2021.10 &&
-          module load xarray/0.20.1 &&
-          module load dask/2021.9.1 &&
+          module load GCCcore/.11.2.0 &&
           module load TensorFlow/2.6.0-CUDA-11.5 &&
+          module load GCC/11.2.0 &&
+          module load OpenMPI/4.1.2 &&
+          module load mpi4py/3.1.3 &&
+          module load Horovod/0.24.3 &&
           source $jube_benchmark_home/../.venv_${systemname}/bin/activate
       - name: systemname
         tag: jwc
@@ -94,7 +103,11 @@ parameterset:
         _:
           $modules;
       - name: threadspertask
-        _: 24
+        _: 48
+        tag: jwb
+      - name: threadspertask
+        _: 40
+        tag: jwc
       - name: nodes
         _: 1
       - name: n_gpu
@@ -120,7 +133,7 @@ parameterset:
       - name: gres
         _: gpu:$n_gpu
       - name: executable
-        _: python -u ${program}
+        _: horovodrun --gloo -np ${num_procs} python -u ${program}
       - name: args_exec
         mode: text
         _: > 
@@ -139,6 +152,9 @@ patternset:
       - {name: epoch_time_max, type: float, _: "Max epoch time: $jube_pat_fp s"}
       - {name: batch_time_avg, type: float, _: "Average time per batch: $jube_pat_fp s"}
       - {name: loss, type: float, _: "Final loss:\\s+$jube_pat_fp"}
+      - {name: val_loss, type: float, _: "Final val loss:\\s+$jube_pat_fp"}
+      - {name: cpu_mem, type: float, _: "Final CPU memory:.*peak: $jube_pat_fp GB"}
+      - {name: gpu_mem, type: float, _: "Final GPU memory:.*peak: $jube_pat_fp GB"}
       - {name: performance, type: float, _: "Average performance:\\s+$jube_pat_fp GB/s"}
 
 analyser:
@@ -167,25 +183,28 @@ result:
         style: pretty
         sort: iter_pat
         column: 
-          - {title: "JobID", _: jobid}
           - {title: "Experiment", _: experiment}
-          - {title: "batch size", _: batch_size}
-          - {title: "patch size", _: patch_size}
-          - {title: "mode", _: mode}
-          - {title: "num parallel", _: num_procs}
-          - {title: "# epochs", _: nepochs}
+          - {title: "JobID", _: jobid}
+            # - {title: "batch size", _: batch_size}
+            # - {title: "patch size", _: patch_size}
           - {title: "# nodes", _: nodes}
-          - {title: "# cpu", _: threadspertask}
           - {title: "# gpu", _: n_gpu}
+          - {title: "num procs", _: num_procs}
+          - {title: "# cpu", _: threadspertask}
+            # - {title: "num parallel", _: num_parallel_calls}
+            # - {title: "# epochs", _: nepochs}
           - {title: "Total runtime", _: total_time}
           - {title: "Training time", _: training_time}
           - {title: "avg. epoch time [s]", _: epoch_time_avg}
+          - {title: "performance [GB/s]", _: performance}
           - {title: "first epoch time [s]", _: epoch_time_first}
           - {title: "min epoch time [s]", _: epoch_time_min}
           - {title: "max epoch time [s]", _: epoch_time_max}
           - {title: "avg. batch time [s]", _: batch_time_avg}
           - {title: "loss", _: loss}
-          - {title: "performance [GB/s]", _: performance}
+          - {title: "val loss", _: val_loss}
+          - {title: "max cpu mem", _: cpu_mem}
+          - {title: "max gpu mem", _: gpu_mem}
     - use: analyse_load
       table:
         name: result_load
@@ -197,7 +216,8 @@ result:
           - {title: "batch size", _: batch_size}
           - {title: "patch size", _: patch_size}
           - {title: "mode", _: mode}
-          - {title: "num parallel", _: num_procs}
+          - {title: "num procs", _: num_procs}
+          - {title: "num parallel", _: num_parallel_calls}
           - {title: "# nodes", _: nodes}
           - {title: "Total runtime", _: total_time}
           - {title: "avg. batch time [s]", _: batch_time_avg}
@@ -214,6 +234,7 @@ step:
         cd $jube_benchmark_home/../setup_env/ &&
         source ./setup_${systemname}.sh
   - name: train
+    active: true
     use:
       - appParameters
       - trainParameters
@@ -231,8 +252,9 @@ step:
         $modules;
         $submit $submit_script
         # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
-        # python ${program} ${input_files} ${program_args}
+        # horovodrun --gloo -np 1 python ${program} ${input_files} ${program_args}
   - name: load
+    active: false
     use:
       - appParameters
       - loadParameters
@@ -250,4 +272,4 @@ step:
         $modules;
         $submit $submit_script
         # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
-        # python ${program} ${input_files} ${program_args}
+        # horovodrun --gloo -np 1 python ${program} ${input_files} ${program_args}

@@ -67,11 +67,15 @@ def main():
         if len(filenames) % num_processes != 0 and main_process:
             print(f"Warning number of files not divisible by {num_processes}")
 
+    # Let the Loader do the sharding, because then we can shard using different filenames
     loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
             with_horovod, args.epochs, args.filename_cache, False, args.debug)
     if main_process:
         print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
+
+    if 0 and with_horovod:
+        dataset = dataset.shard(hvd.size(), hvd.rank())
 
     # Load all the data
     s_time = time.time()
@@ -110,9 +114,13 @@ def main():
             for f in args.validation_files:
                 val_filenames += glob.glob(f)
 
+            # Do sharding on the dataset, instead of in the loader, since we might not have enough
+            # files to support sharding into the number of processes
             val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-                    0, 1, args.filename_cache, True, args.debug)
-            val_dataset = val_loader.get_dataset(args.num_parallel_calls).shard(hvd.size(), hvd.rank())
+                    False, 1, args.filename_cache, True, args.debug)
+            val_dataset = val_loader.get_dataset(args.num_parallel_calls)
+            if with_horovod:
+                val_dataset = val_dataset.shard(hvd.size(), hvd.rank())
             kwargs["validation_data"] = val_dataset
         history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
                 callbacks=callbacks, verbose=main_process, **kwargs)
