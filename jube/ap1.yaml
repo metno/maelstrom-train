@@ -25,6 +25,9 @@ parameterset:
       - name: input_files
         type: string
         _: ${datadir}/${datasize}/202???01T*.nc
+      - name: infer_input_files
+        type: string
+        _: ${datadir}/${datasize}/20200615T*.nc
       - name: batch_size
         type: int
         _: 1
@@ -67,7 +70,7 @@ parameterset:
         _ : ${datadir}/${datasize}/20200615T*.nc
       - name: program_args
         type: string
-        _: "-m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files} --norm ${normalization}"
+        _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files} --norm ${normalization}"
   - name: loadParameters
     parameter:
       - name: mode
@@ -75,7 +78,7 @@ parameterset:
         _: load
       - name: program_args
         type: string
-        _: "-m load -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
+        _: "${input_files} -m load -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
   - name: inferParameters
     parameter:
       - name: mode
@@ -83,7 +86,7 @@ parameterset:
         _: infer
       - name: program_args
         type: string
-        _: "-m infer -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
+        _: "${infer_input_files} -m infer -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
   - name: globalParameter
     parameter:
       - name: modules
@@ -165,7 +168,6 @@ parameterset:
       - name: args_exec
         mode: text
         _: > 
-          ${input_files}
           ${program_args}
 
 patternset:
@@ -307,7 +309,7 @@ step:
         $modules;
         $submit $submit_script
         # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
-        # horovodrun --gloo -np 1 python ${program} ${input_files} ${program_args}
+        # horovodrun --gloo -np 1 python ${program} ${program_args}
   - name: load
     active: false
     use:
@@ -327,7 +329,7 @@ step:
         $modules;
         $submit $submit_script
         # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
-        # horovodrun --gloo -np 1 python ${program} ${input_files} ${program_args}
+        # horovodrun --gloo -np 1 python ${program} ${program_args}
   - name: infer
     active: true
     use:
