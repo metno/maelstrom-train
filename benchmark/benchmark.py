@@ -15,10 +15,6 @@ import tensorflow as tf
 from tensorflow import keras
 import tensorflow.keras.backend as K
 
-with_horovod = "HOROVOD_RANK" in os.environ
-if with_horovod:
-    import horovod.tensorflow as hvd
-
 """ This script tests the performance of the Application 1 data loader
 
 Each file the data loader reads has predictors with dimensions (leadtime, y, x, predictor). This
@@ -46,6 +42,11 @@ def main():
     parser.add_argument('--norm', default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/normalization.yml", help='File with normalization information', dest='normalization')
     args = parser.parse_args()
 
+    with_horovod = check_horovod()
+    if with_horovod:
+        print("Running with horovod")
+        import horovod.tensorflow as hvd
+
     if args.cpu_only:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -55,6 +56,7 @@ def main():
 
     main_process = True
     num_processes = 1
+    set_gpu_memory_growth()
     if with_horovod:
         gpus = tf.config.experimental.list_physical_devices("GPU")
         hvd.init()
@@ -62,7 +64,9 @@ def main():
         print("Num GPUs Available: ", len(gpus))
         if len(gpus) == 0:
             raise Exception("No GPUs available")
-        tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], "GPU")
+        if hvd.size() == len(gpus):
+            # Probably using horovodrun (not srun)
+            tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], "GPU")
         main_process = hvd.rank() == 0
         num_processes = hvd.size()
         if len(filenames) % num_processes != 0 and main_process:
@@ -74,9 +78,6 @@ def main():
     if main_process:
         print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
-
-    if 0 and with_horovod:
-        dataset = dataset.shard(hvd.size(), hvd.rank())
 
     # Load all the data
     s_time = time.time()
@@ -118,11 +119,10 @@ def main():
             # Do sharding on the dataset, instead of in the loader, since we might not have enough
             # files to support sharding into the number of processes
             val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-                    0 and with_horovod, 1, args.filename_cache, args.debug)
+                    False, 1, args.filename_cache, args.debug)
             val_dataset = val_loader.get_dataset(args.num_parallel_calls)
             if with_horovod:
                 val_dataset = val_dataset.shard(hvd.size(), hvd.rank())
-                val_dataset = val_dataset.cache()
             kwargs["validation_data"] = val_dataset
         history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
                 callbacks=callbacks, verbose=main_process, **kwargs)
@@ -168,17 +168,41 @@ def main():
     elif args.mode == "infer":
         ss_time = time.time()
         time_first_sample = None
-        if 0:
+        inference_time = 0
+        if 1:
+            # Run predict_on_batch on each batch
             count = 0
             for predictors, targets in dataset:
-                print(count)
-                if time_first_sample is None:
-                    time_first_sample = time.time()
-                    print("First: ", time_first_sample - ss_time)
-                q = model.predict_on_batch(predictors)
                 count += 1
-        q = model.predict(dataset, verbose=1)
-        print("Infer: ", time.time() - ss_time)
+                curr_time = time.time()
+                if count % loader.num_batches_per_file == 0 and main_process:
+                    curr_file_index = count // loader.num_batches_per_file
+                    print(f"Done {curr_file_index} files")
+
+                    agg_time = curr_time - s_time
+                    agg_size_gb = loader.size_gb / loader.num_batches * count
+                    print(f"   Acc time: {agg_time:.2f} ")
+                    print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
+                    print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
+                    if with_horovod:
+                        print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
+
+                sss_time = time.time()
+
+                if time_first_sample is None:
+                    time_first_sample = time.time() - ss_time
+                q = model.predict_on_batch(predictors)
+                inference_time += time.time() - sss_time
+            print(f"Batches {count}")
+            total_time = time.time() - ss_time
+            data_loading_overhead = total_time - inference_time
+        else:
+            # Run predict on the whole dataset. This seams to cause memory to run out when running
+            # on large datasets.
+            q = model.predict(dataset, verbose=1)
+            inference_time = time.time() - ss_time
+            data_loading_overhead = None
+        # print(time.time() - ss_time)
 
     if with_horovod:
         hvd.join()
@@ -228,7 +252,7 @@ def main():
             print(f"   Final loss: {history.history['loss'][-1]:.3f}")
             if args.validation_files is not None:
                 print(f"   Final val loss: {history.history['val_loss'][-1]:.3f}")
-            print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            print(f"   Average time per batch: {total_time / loader.num_batches / num_processes / args.epochs:.2f} s")
             print_gpu_usage("   Final GPU memory: ")
             print_cpu_usage("   Final CPU memory: ")
             # for i, curr_time in enumerate():
@@ -237,11 +261,20 @@ def main():
             print("Data loading performance:")
             print(f"   Total runtime: {total_time:.2f} s")
             print(f"   Average performance: {loader_size_gb / total_time * args.epochs:.2f} GB/s")
-            print(f"   Average time per batch: {total_time / loader.num_batches / args.epochs:.2f} s")
+            print(f"   Average time per batch: {total_time / loader.num_batches / num_processes / args.epochs:.2f} s")
             print_gpu_usage("   Final GPU memory: ")
             print_cpu_usage("   Final CPU memory: ")
             for k,v in loader.timing.items():
                 print(f"   {k}: {v:.2f}")
+        elif args.mode == "infer":
+            print("Inference performance:")
+            print(f"   Total runtime: {total_time:.2f} s")
+            print(f"   Inference time: {inference_time:.2f} s")
+            if data_loading_overhead is not None:
+                print(f"   Data loading overhead: {data_loading_overhead:.2f} s")
+            print(f"   Average performance: {loader_size_gb / total_time * args.epochs:.2f} GB/s")
+            print_gpu_usage("   Final GPU memory: ")
+            print_cpu_usage("   Final CPU memory: ")
 
 
 def map_decorator1_to_3(func):
@@ -358,7 +391,11 @@ class Ap1Loader:
         self.batch_size = batch_size
 
     def get_dataset(self, num_parallel_calls):
-        """Returns a tf.data object"""
+        """Returns a tf.data object
+
+        Args:
+            num_parallel_calls (int): Maximum number of threads that each pipeline stage can use
+        """
         self.start_time = time.time()
 
         dataset = tf.data.Dataset.range(len(self.filenames))
@@ -375,10 +412,11 @@ class Ap1Loader:
         # reading, causing the memory requirement to be large. The reading is not the bottleneck so
         # we don't need to read multiple files in parallel.
         dataset = dataset.map(self.read, 1)
+        dataset = dataset.prefetch(1)
 
         # Broadcast static_predictors to leadtime dimension
-        dataset = dataset.map(self.expand_static_predictors, num_parallel_calls)
-        # dataset = dataset.prefetch(4)
+        # Set parallel_calls to 1 here as well, to prevent the pipeline from getting too far ahead
+        dataset = dataset.map(self.expand_static_predictors, 1) # num_parallel_calls)
 
         # Unbatch the leadtime dimension, so that each leadtime can be processed in parallel
         dataset = dataset.unbatch()
@@ -744,12 +782,26 @@ class Ap1Loader:
         s += f"   Batch size: {self.size_gb / self.num_batches * 1024:.2f} MB\n"
         return s
 
-
-def get_num_parallel_calls(num_parallel_calls):
-    if num_parallel_calls is None: # == "AUTO":
+def parse_num_parallel_calls(string):
+    if string == "autotune":
         return tf.data.AUTOTUNE
     else:
-        return int(num_parallel_calls)
+        return int(string)
+
+def check_horovod():
+    """Check if we should run with horovod based on environment variables
+
+    Returns:
+        bool: True if we should run with horovod, False otherwise
+    """
+    # Program is run with horovodrun
+    with_horovod = "HOROVOD_RANK" in os.environ
+
+    if not with_horovod:
+        # Program is run with srun
+        with_horovod = "SLURM_STEP_NUM_TASKS" in os.environ and int(os.environ["SLURM_STEP_NUM_TASKS"]) > 1
+
+    return with_horovod
 
 def print_gpu_usage(message="", show_line=False):
     try:
@@ -781,7 +833,6 @@ def print_cpu_usage(message="", show_line=False):
         output += " (%s:%s)" % (frameinfo.filename, frameinfo.lineno)
 
     print(output)
-
 
 def get_memory_usage():
     p = psutil.Process(os.getpid())
@@ -940,12 +991,6 @@ def quantile_score(y_true, y_pred):
         err = y_true[..., 0] - y_pred[..., i]
         qtloss += (quantile - tf.cast((err < 0), tf.float32)) * err
     return K.mean(qtloss) / len(quantiles)
-
-def parse_num_parallel_calls(string):
-    if string == "autotune":
-        return tf.data.AUTOTUNE
-    else:
-        return int(string)
 
 if __name__ == "__main__":
     main()
