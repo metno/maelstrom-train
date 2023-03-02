@@ -45,6 +45,7 @@ setuptools.setup(
         "tqdm",
         "tensorflow",
         "xarray",
+        "dask",
     ],
     package_data={"etc": ["*.yml"]},
     include_package_data=True,
