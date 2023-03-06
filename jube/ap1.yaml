@@ -7,7 +7,16 @@ parameterset:
     parameter:
       - name: datadir
         type: string
+        tag: jwb|jwc
         _: "/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datadir
+        type: string
+        tag: e4intel
+        _: "/scratch_local/Maelstrom/tnipen/"
+      - name: datadir
+        type: string
+        tag: e4amd
+        _: "/scratch/tnipen/"
       - name: datasize
         type: string
         _: 5TB
@@ -37,6 +46,10 @@ parameterset:
         type: int
         _: 36
         tag: jwc
+      - name: batch_size
+        type: int
+        _: 72
+        tag: e4intel|e4amd
       - name: patch_size
         type: int
         _: 512
@@ -50,10 +63,10 @@ parameterset:
         _: 12
       - name: experiment
         type: int
-        _: 0,1,2
+        _: 0 # ,1,2
       - name: normalization
         type: string
-        _: /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/normalization.yml
+        _: ${datadir}/normalization.yml
   - name: trainParameters
     parameter:
       - name: mode
@@ -99,12 +112,24 @@ parameterset:
           module load Horovod/0.24.3 &&
           source $jube_benchmark_home/../.venv_${systemname}/bin/activate &&
           export SRUN_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK}
+      - name: modules
+        tag: e4intel|e4amd
+        separator: |
+        _:
+          module load slurm &&
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate
       - name: systemname
         tag: jwc
         _: jwc
       - name: systemname
         tag: jwb
         _: jwb
+      - name: systemname
+        tag: e4intel
+        _: e4intel
+      - name: systemname
+        tag: e4amd
+        _: e4amd
   - name: executeset
     init_with: platform.xml
   - name: systemParameter
@@ -120,14 +145,11 @@ parameterset:
       # Cannot evaluate "48 // $num_procs" for parameter "calc_threadspertask": invalid syntax (<string>, line 1)
       - {name: n_cpu, _: 48, tag: jwb}
       - {name: n_cpu, _: 40, tag: jwc}
+      - {name: n_cpu, _: 32, tag: e4intel|e4amd}
       - name: nodes
         _: 1
       - name: n_procs
         _: 1
-        tag: jwb
-      - name: n_procs
-        _: 1
-        tag: jwc
       - name: n_gpu
         _: $n_procs
       - name: taskspernode
@@ -139,7 +161,11 @@ parameterset:
       - name: timelimit
         _: "00:40:00"
       - name: account
+        tag: jwb|jwc
         _: deepacf
+      - name: account
+        tag: e4amd|e4intel
+        _: maelstrom
       - name: queue
         tag: jwb+!test
         _: booster
@@ -152,16 +178,19 @@ parameterset:
       - name: queue
         tag: jwc+test
         _: develgpus
+      - name: queue
+        tag: e4intel
+        _: i-gpu-a100
+      - name: queue
+        tag: e4amd
+        _: a-gpu-mi100
       - name: gres
         _: gpu:$n_gpu
+      - name: additional_job_config
+        tag: e4intel|e4amd
+        _: "#SBATCH --mem=128Gb"
       - name: executable
         _: python -u ${program}
-        tag: jwb
-        # _: horovodrun --gloo -np ${n_procs} python -u ${program}
-        # _: --cpus-per-task $threadspertask horovodrun --gloo -np ${n_procs} python -u ${program}
-      - name: executable
-        _: python -u ${program}
-        tag: jwc
       - name: args_exec
         mode: text
         _: > 
