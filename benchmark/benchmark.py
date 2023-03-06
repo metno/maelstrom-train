@@ -40,6 +40,8 @@ def main():
     parser.add_argument('--debug', help='Turn on debugging information', action="store_true")
     parser.add_argument('--cpu', help='Limit execution to CPU', dest='cpu_only', action='store_true')
     parser.add_argument('--norm', default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/normalization.yml", help='File with normalization information', dest='normalization')
+    parser.add_argument('-s', help='Shuffle leadtimes (read one leadtime from each file)', dest='shuffle_leadtimes', action="store_true")
+    parser.add_argument('-f', help='Generate fake data (thus there is no reading from the filesystem', dest='fake_data', action='store_true')
     args = parser.parse_args()
 
     with_horovod = check_horovod()
@@ -53,6 +55,7 @@ def main():
     filenames = list()
     for f in args.files:
         filenames += glob.glob(f)
+
 
     main_process = True
     num_processes = 1
@@ -71,10 +74,13 @@ def main():
         num_processes = hvd.size()
         if len(filenames) % num_processes != 0 and main_process:
             print(f"Warning number of files not divisible by {num_processes}")
+    else:
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        print("Num GPUs Available: ", len(gpus))
 
     # Let the Loader do the sharding, because then we can shard using different filenames
     loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-            with_horovod, args.epochs, args.filename_cache, args.debug)
+            with_horovod, args.epochs, args.filename_cache, args.shuffle_leadtimes, args.fake_data, args.debug)
     if main_process:
         print(loader)
     dataset = loader.get_dataset(args.num_parallel_calls)
@@ -119,7 +125,7 @@ def main():
             # Do sharding on the dataset, instead of in the loader, since we might not have enough
             # files to support sharding into the number of processes
             val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-                    False, 1, args.filename_cache, args.debug)
+                    False, 1, args.filename_cache, args.shuffle_leadtimes, args.fake_data, args.debug)
             val_dataset = val_loader.get_dataset(args.num_parallel_calls)
             if with_horovod:
                 val_dataset = val_dataset.shard(hvd.size(), hvd.rank())
@@ -322,7 +328,7 @@ Data loader
 """
 class Ap1Loader:
     def __init__(self, filenames, patch_size, batch_size, filename_normalization, with_leadtime=False,
-            with_horovod=False, repeat=None, filename_cache=None, debug=True):
+            with_horovod=False, repeat=None, filename_cache=None, shuffle_leadtimes=False, create_fake_data=False, debug=True):
         self.with_horovod = with_horovod
         if self.with_horovod:
             if len(filenames) == 0:
@@ -341,6 +347,7 @@ class Ap1Loader:
         self.repeat = repeat
         self.filename_cache = filename_cache
         self.debug = debug
+        self.shuffle_leadtimes = shuffle_leadtimes
 
         # Where should data reside during the processing steps? Processing seems faster on CPU,
         # perhaps because the pipeline stages can run in parallel better than on the GPU?
@@ -381,7 +388,7 @@ class Ap1Loader:
 
         # The name of the raw forecast predictor, used to subtract the target
         self.raw_predictor_index = self.predictor_names.index("air_temperature_2m")
-        self.create_fake_data = False
+        self.create_fake_data = create_fake_data
 
         # Cache the normalization coefficients
         self.normalize_add = None
@@ -398,7 +405,13 @@ class Ap1Loader:
         """
         self.start_time = time.time()
 
-        dataset = tf.data.Dataset.range(len(self.filenames))
+        if self.shuffle_leadtimes:
+            dataset = tf.data.Dataset.range(len(self.filenames) * self.num_leadtimes)
+            num_read_threads = num_parallel_calls
+        else:
+            dataset = tf.data.Dataset.range(len(self.filenames))
+            num_read_threads = 1
+
         dataset = dataset.shuffle(len(self.filenames))
         if self.repeat is not None:
             dataset = dataset.repeat(self.repeat)
@@ -411,12 +424,12 @@ class Ap1Loader:
         # Set number of parallel calls to 1, so that the pipeline doesn't get too far ahead on the
         # reading, causing the memory requirement to be large. The reading is not the bottleneck so
         # we don't need to read multiple files in parallel.
-        dataset = dataset.map(self.read, 1)
+        dataset = dataset.map(self.read, num_read_threads)
         dataset = dataset.prefetch(1)
 
         # Broadcast static_predictors to leadtime dimension
         # Set parallel_calls to 1 here as well, to prevent the pipeline from getting too far ahead
-        dataset = dataset.map(self.expand_static_predictors, 1) # num_parallel_calls)
+        dataset = dataset.map(self.expand_static_predictors, num_read_threads) # num_parallel_calls)
 
         # Unbatch the leadtime dimension, so that each leadtime can be processed in parallel
         dataset = dataset.unbatch()
@@ -498,13 +511,30 @@ class Ap1Loader:
         """
         s_time = time.time()
         index = index.numpy()
+        if self.shuffle_leadtimes:
+            file_index = index // self.num_leadtimes
+            leadtime_index = index % self.num_leadtimes
+            print(index, file_index, leadtime_index)
+        else:
+            file_index = None
+            leadtime_index = None
+
         self.print(f"Start reading index={index}")
 
         with tf.device(self.device):
             if not self.create_fake_data:
-                predictors = self.data["predictors"][index, ...]
-                static_predictors = self.data["static_predictors"][index, ...]
-                targets = self.data["target_mean"][index, ...]
+                if not self.shuffle_leadtimes:
+                    predictors = self.data["predictors"][index, ...]
+                    static_predictors = self.data["static_predictors"][index, ...]
+                    targets = self.data["target_mean"][index, ...]
+                else:
+                    predictors = self.data["predictors"][index, leadtime_index, ...]
+                    static_predictors = self.data["static_predictors"][index, leadtime_index, ...]
+                    targets = self.data["target_mean"][index, leadtime_index, ...]
+                    predictors = np.expand_dims(predictors, -1)
+                    static_predictors = np.expand_dims(static_predictors, -1)
+                    targets = np.expand_dims(targets, -1)
+
                 targets = np.expand_dims(targets, -1)
 
                 # Force explicit conversion here, so that we can account the time it takes
@@ -513,9 +543,15 @@ class Ap1Loader:
                 static_predictors = tf.convert_to_tensor(static_predictors)
                 targets = tf.convert_to_tensor(targets)
             else:
-                predictors = tf.random.uniform(self.predictor_shape)
-                targets = tf.expand_dims(tf.random.uniform(self.target_shape), 3)
-                static_predictors = tf.random.uniform(self.static_predictor_shape)
+                if not self.shuffle_leadtimes:
+                    predictors = tf.random.uniform(self.predictor_shape)
+                    targets = tf.expand_dims(tf.random.uniform(self.target_shape), 3)
+                    static_predictors = tf.random.uniform(self.static_predictor_shape)
+                else:
+                    # TODO:
+                    predictors = tf.random.uniform(self.predictor_shape)
+                    targets = tf.expand_dims(tf.random.uniform(self.target_shape), 3)
+                    static_predictors = tf.random.uniform(self.static_predictor_shape)
         e_time = time.time()
         self.timing["read"] += e_time - s_time
         # print(predictors.shape, static_predictors.shape, targets.shape)
@@ -779,6 +815,7 @@ class Ap1Loader:
         s += f"   Patches per file: {self.num_patches_per_file}\n"
         s += f"   Samples per file: {self.num_samples_per_file}\n"
         s += f"   Batches per file: {self.num_batches_per_file}\n"
+        s += f"   Num batches: {self.num_batches}\n"
         s += f"   Batch size: {self.size_gb / self.num_batches * 1024:.2f} MB\n"
         return s
 
