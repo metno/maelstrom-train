@@ -11,16 +11,16 @@ parameterset:
         _: "/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
       - name: datadir
         type: string
-        tag: e4intel
-        _: "/scratch_local/Maelstrom/tnipen/"
-      - name: datadir
-        type: string
-        tag: e4amd
+        tag: e4intel|e4amd
         _: "/scratch/tnipen/"
       - name: datadir
         type: string
         tag: cscratch
         _: "/p/cscratch/fs/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datadir
+        type: string
+        tag: scratch_local
+        _: "/scratch_local/Maelstrom/tnipen/"
       - name: datasize
         type: string
         _: 5TB
@@ -43,24 +43,16 @@ parameterset:
         _: ${datadir}/${datasize}/20200615T*.nc
       - name: batch_size
         type: int
-        _: 1
-        tag: "test"
-      - name: batch_size
-        type: int
+        tag: "!jwc"
         _: 72
-        tag: jwb
       - name: batch_size
         type: int
-        _: 36
         tag: jwc
-      - name: batch_size
-        type: int
-        _: 72
-        tag: e4intel|e4amd
+        _: 36
       - name: patch_size
         type: int
-        _: 512
         tag: "!test"
+        _: 512
       - name: patch_size
         type: int
         _: 32
@@ -172,7 +164,7 @@ parameterset:
         type: int
         _:  $n_cpu // $n_procs
       - name: timelimit
-        _: "00:40:00"
+        _: "01:30:00"
       - name: account
         tag: jwb|jwc
         _: deepacf
