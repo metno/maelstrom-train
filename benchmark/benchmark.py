@@ -22,6 +22,27 @@ tensor is of the size (59, 2321, 1796, 8). This needs to be processed such that 
 (leadtime, y_patch, x_patch, predictor), where y_patch and x_patch typically are 256.
 """
 
+def check_horovod():
+    """Check if we should run with horovod based on environment variables
+
+    Returns:
+        bool: True if we should run with horovod, False otherwise
+    """
+    # Program is run with horovodrun
+    with_horovod = "HOROVOD_RANK" in os.environ
+
+    if not with_horovod:
+        # Program is run with srun
+        with_horovod = "SLURM_STEP_NUM_TASKS" in os.environ and int(os.environ["SLURM_STEP_NUM_TASKS"]) > 1
+
+    return with_horovod
+
+with_horovod = check_horovod()
+if with_horovod:
+    # Import it 
+    print("Running with horovod")
+    import horovod.tensorflow as hvd
+
 # TODO: When repeating a dataset and the dataset size  doesn't divide evenly by the batch size, we
 # run out of data. We should really strive to make the benchmark divide evenly, otherwise it is hard
 # to analyse the results for the training.
@@ -44,11 +65,6 @@ def main():
     parser.add_argument('-f', help='Generate fake data (thus there is no reading from the filesystem', dest='fake_data', action='store_true')
     args = parser.parse_args()
 
-    with_horovod = check_horovod()
-    if with_horovod:
-        print("Running with horovod")
-        import horovod.tensorflow as hvd
-
     if args.cpu_only:
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
@@ -67,13 +83,14 @@ def main():
         print("Num GPUs Available: ", len(gpus))
         if len(gpus) == 0:
             raise Exception("No GPUs available")
-        if hvd.size() == len(gpus):
+        if len(gpus) > 1:
+        # if hvd.size() == len(gpus):
             # Probably using horovodrun (not srun)
             tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], "GPU")
         main_process = hvd.rank() == 0
         num_processes = hvd.size()
         if len(filenames) % num_processes != 0 and main_process:
-            print(f"Warning number of files not divisible by {num_processes}")
+            print(f"Warning number of files ({len(filenames)}) not divisible by {num_processes}")
     else:
         gpus = tf.config.experimental.list_physical_devices("GPU")
         print("Num GPUs Available: ", len(gpus))
@@ -824,21 +841,6 @@ def parse_num_parallel_calls(string):
         return tf.data.AUTOTUNE
     else:
         return int(string)
-
-def check_horovod():
-    """Check if we should run with horovod based on environment variables
-
-    Returns:
-        bool: True if we should run with horovod, False otherwise
-    """
-    # Program is run with horovodrun
-    with_horovod = "HOROVOD_RANK" in os.environ
-
-    if not with_horovod:
-        # Program is run with srun
-        with_horovod = "SLURM_STEP_NUM_TASKS" in os.environ and int(os.environ["SLURM_STEP_NUM_TASKS"]) > 1
-
-    return with_horovod
 
 def print_gpu_usage(message="", show_line=False):
     try:

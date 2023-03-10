@@ -11,12 +11,12 @@ parameterset:
         _: "/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
       - name: datadir
         type: string
-        tag: e4intel|e4amd
-        _: "/scratch/tnipen/"
-      - name: datadir
-        type: string
         tag: cscratch
         _: "/p/cscratch/fs/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datadir
+        type: string
+        tag: e4intel|e4amd
+        _: "/scratch/tnipen/"
       - name: datadir
         type: string
         tag: scratch_local
@@ -45,6 +45,7 @@ parameterset:
         type: int
         tag: "!jwc"
         _: 72
+      # V100 GPUs don't have enough memory, so we need a smaller batch size
       - name: batch_size
         type: int
         tag: jwc
@@ -57,12 +58,13 @@ parameterset:
         type: int
         _: 32
         tag: test
+      # Maximum number of threads that each stage in data loader pipeline can use
       - name: num_parallel_calls
         type: int
         _: 12
       - name: experiment
         type: int
-        _: 0 # ,1,2
+        _: 0,1,2
       - name: normalization
         type: string
         _: ${datadir}/normalization.yml
@@ -154,7 +156,7 @@ parameterset:
       - name: nodes
         _: 1
       - name: n_procs
-        _: 1
+        _: 1,2,4
       - name: n_gpu
         _: $n_procs
       - name: taskspernode
@@ -256,14 +258,10 @@ result:
         column: 
           - {title: "Experiment", _: experiment}
           - {title: "JobID", _: jobid}
-            # - {title: "batch size", _: batch_size}
-            # - {title: "patch size", _: patch_size}
           - {title: "# nodes", _: nodes}
           - {title: "# gpu", _: n_gpu}
           - {title: "num procs", _: n_procs}
           - {title: "# cpu", _: threadspertask}
-            # - {title: "num parallel", _: num_parallel_calls}
-            # - {title: "# epochs", _: nepochs}
           - {title: "Total runtime", _: total_time}
           - {title: "Training time", _: training_time}
           - {title: "avg. epoch time [s]", _: epoch_time_avg}
@@ -321,8 +319,10 @@ step:
         $modules;
         cd $jube_benchmark_home/../setup_env/ &&
         source ./setup_${systemname}.sh
+
+  # Traning experiments
   - name: train
-    active: false
+    active: true
     use:
       - appParameters
       - trainParameters
@@ -339,10 +339,10 @@ step:
       _: 
         $modules;
         $submit $submit_script
-        # source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
-        # horovodrun --gloo -np 1 python ${program} ${program_args}
+
+  # Data loader experiments
   - name: load
-    active: false
+    active: true
     use:
       - appParameters
       - loadParameters
@@ -359,6 +359,8 @@ step:
       _:
         $modules;
         $submit $submit_script
+
+  # Inference experiments
   - name: infer
     active: true
     use:
