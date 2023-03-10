@@ -107,6 +107,7 @@ def main():
     count = 0
     loader.start_time = s_time
     time_last_file = s_time
+    saving_time = None
     time_first_sample = None
     loader_size_gb = loader.size_gb * num_processes
     loader_num_files = loader.num_files * num_processes
@@ -150,6 +151,11 @@ def main():
         history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=loader.num_batches,
                 callbacks=callbacks, verbose=main_process, **kwargs)
         training_time = time.time() - ss_time
+        ss_time = time.time()
+
+        create_directory("results")
+        model.save("results/model")
+        saving_time = time.time() - ss_time
         time_first_sample = None
     elif args.mode == "load":
         for k in dataset:
@@ -264,6 +270,7 @@ def main():
             times = timing_callback.get_epoch_times()
             print(f"   Total runtime: {total_time:.2f} s")
             print(f"   Total training time: {training_time:.2f} s")
+            print(f"   Model saving time: {saving_time:.2f} s")
             print(f"   Average performance: {loader_size_gb / training_time * args.epochs:.2f} GB/s")
             print(f"   First epoch time: {times[0]:.2f} s")
             print(f"   Min epoch time: {np.min(times):.2f} s")
@@ -891,6 +898,13 @@ def set_gpu_memory_growth():
     if gpus:
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
+
+def create_directory(filename):
+    """Creates all sub directories necessary to be able to write filename"""
+    dir = os.path.dirname(filename)
+    if dir != "":
+        os.makedirs(dir, exist_ok=True)
+
 
 class TimingCallback(tf.keras.callbacks.Callback):
     def __init__(self):
