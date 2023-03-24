@@ -156,7 +156,11 @@ parameterset:
       - name: nodes
         _: 1
       - name: n_procs
+        tag: jwb
         _: 1,2,4
+      - name: n_procs
+        tag: "!jwb"
+        _: 1
       - name: n_gpu
         _: $n_procs
       - name: taskspernode
