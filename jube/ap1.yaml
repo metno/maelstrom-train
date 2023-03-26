@@ -136,10 +136,29 @@ parameterset:
     parameter:
       - name: preprocess
         mode: text
-        separator: |
+        tag: e4intel|e4amd
+        # separator: |
+        _:
+          export label=$$(/opt/share/scripts/powerdiscovery/getlabel.sh);
+          echo "POWERMEASUREMENT Label = $$label";
+          /opt/share/scripts/powerdiscovery/getpower_bg.sh 1000 &
+          $modules;
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: preprocess
+        mode: text
+        tag: "!e4intel+!e4amd"
+        # separator: |
         _:
           $modules;
           source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: postprocess
+        mode: text
+        tag: e4intel|e4amd
+        separator: |
+        _: |
+          kill -9 $$(cat ~/powerout.$$label.pid)
+          awk '{print "POWERMEASUREMENT: " $0}' ~/powerout.$$label.csv
+
       # NOTE: put n_procs here. If it is put in the different steps (train, load, infer), then jube won't
       # run since then threadspertask cannot be computed. It gives the following error:
       # Cannot evaluate "48 // $num_procs" for parameter "calc_threadspertask": invalid syntax (<string>, line 1)
@@ -199,7 +218,7 @@ parameterset:
         _: gpu:$n_gpu
       - name: additional_job_config
         tag: e4intel|e4amd
-        _: "#SBATCH --mem=128Gb"
+        _: "#SBATCH --mem=256Gb"
       - name: executable
         _: python -u ${program}
       - name: args_exec
@@ -225,6 +244,11 @@ patternset:
       - {name: cpu_mem, type: float, _: "Final CPU memory:.*peak: $jube_pat_fp GB"}
       - {name: gpu_mem, type: float, _: "Final GPU memory:.*peak: $jube_pat_fp GB"}
       - {name: performance, type: float, _: "Average performance:\\s+$jube_pat_fp GB/s"}
+      - {name: node_id, type: string, _: "POWERMEASUREMENT Label = $jube_pat_wrd"}
+      - {name: time_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_int,$jube_pat_nint,$jube_pat_nint"}
+      - {name: watt_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_nint,$jube_pat_int,$jube_pat_nint"}
+      - {name: va_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_nint,$jube_pat_nint,$jube_pat_int"}
+
 
 analyser:
     - name: analyse_train
@@ -278,6 +302,13 @@ result:
           - {title: "val loss", _: val_loss}
           - {title: "max cpu mem", _: cpu_mem}
           - {title: "max gpu mem", _: gpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
+          # - {title: "Min. Watts",      _: watt_pat_min}
+          # - {title: "Max. VA",         _: va_pat_max}
+          # - {title: "Avg. VA",         _: va_pat_avg}
+          # - {title: "Min. VA",         _: va_pat_min}
     - use: analyse_load
       table:
         name: result_load
@@ -293,6 +324,9 @@ result:
           - {title: "avg. batch time [s]", _: batch_time_avg}
           - {title: "performance [GB/s]", _: performance}
           - {title: "max cpu mem", _: cpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
     - use: analyse_infer
       table:
         name: result_infer
@@ -311,6 +345,9 @@ result:
           - {title: "performance [GB/s]", _: performance}
           - {title: "max cpu mem", _: cpu_mem}
           - {title: "max gpu mem", _: gpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
 
 step:
   - name: setup_venv
