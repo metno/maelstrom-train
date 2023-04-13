@@ -5,7 +5,7 @@ import sys
 
 parser = argparse.ArgumentParser("This program reads one AP1 file and computes the reading performance of the filesystem")
 parser.add_argument("-f", default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc", help="Read data from these files (e.g.  /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc)", dest="file")
-parser.add_argument("-m", default="open_mfdataset", help="Which data loading method to use?", choices=["open_mfdataset", "open_dataset_load", "open_dataset", "netcdf"], dest="method")
+parser.add_argument("-m", default="open_mfdataset", help="Which data loading method to use?", choices=["open_mfdataset", "open_dataset_load", "open_dataset", "netcdf", "raw"], dest="method")
 
 args = parser.parse_args()
 
@@ -41,6 +41,15 @@ elif args.method == "netcdf":
         for var in file.variables:
             size += np.product(file.variables[var].shape) * 4
             q = file.variables[var][:]
+elif args.method == "raw":
+    file = open(args.file, 'rb')
+    s_time = time.time();
+    size = 0
+    N = 10000000
+    x=file.read(N)
+    while x:
+        x=file.read(N)
+        size += N
 else:
     raise Exception(f"Unknown method {method}")
 
