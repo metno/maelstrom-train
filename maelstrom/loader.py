@@ -17,6 +17,7 @@ import numpy as np
 import tensorflow as tf
 import tqdm
 import yaml
+import einops
 
 import maelstrom
 
@@ -90,8 +91,8 @@ def get(args, sample=None):
     return loader
 
 
-class DataLoader:
-    """Class for loading data from a remote store
+class Loader:
+    """Class for loading data
 
     This class handles caching, parallel loading, and stores timing statistics
 
@@ -108,13 +109,7 @@ class DataLoader:
 
     def __init__(
         self,
-        times,
-        leadtimes,
-        predictor_names,
-        num_targets,
-        num_files,
-        num_samples_per_file,
-        grid,
+        source,
         cache_size=None,
         batch_size=1,
         prefetch=1,
@@ -148,23 +143,20 @@ class DataLoader:
             num_random_patches (int): NUmber of random patches to pick from full file. If None, use all patches.
 
         """
-        if predictor_names is not None and not isinstance(predictor_names, list):
-            raise ValueError("predictor_names must be a list of strings")
+        self.source = source
 
-        if batch_size != 1:
+        if 0 and batch_size != 1:
             raise ValueError(
                 "batch size other than 1 is not currently tested well enough..."
             )
 
-        self.num_files = num_files
-        self.times = times
-        self.leadtimes = leadtimes
-        self.predictor_names = predictor_names
         self.predict_diff = predict_diff
-        self.num_targets = num_targets
-        self.num_samples_per_file = num_samples_per_file
+        self.num_targets = 1 # num_targets
+        self.num_samples_per_file = 1 # num_samples_per_file
         self.patch_size = patch_size
         self.num_random_patches = num_random_patches
+
+        """
         if patch_size is not None:
             full_num_y, full_num_x = grid.size()
 
@@ -208,22 +200,23 @@ class DataLoader:
             self.num_x,
             self.num_predictors,
         ]
+        """
 
         self.cache_size = cache_size
         self.cache = dict()
+
         self.debug = debug
-
-        self.batch_size = batch_size
-        self.num_parallel_calls = num_parallel_calls
-        self.prefetch = prefetch
-
-        self.sample_indices = np.argsort(np.random.rand(self.num_samples))
-        self.sample_indices = range(self.num_samples)
-
         self.count_reads = 0
         self.timing = collections.defaultdict(lambda: 0)
+        self.num_parallel_calls = num_parallel_calls
+        self.sample_indices = np.argsort(np.random.rand(len(self.source)))
+        self.sample_indices = range(len(self.source))
+        self.prefetch = prefetch
+        self.batch_size = batch_size
+        self.normalize_std = tf.convert_to_tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], tf.float32)
+        self.normalize_mean = tf.convert_to_tensor([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], tf.float32)
 
-    def load_data(self, index):
+    def load_from_source(self, index):
         """Loads data from archive
         Args:
             index (int): Index from archive to load from
@@ -232,55 +225,9 @@ class DataLoader:
             predictors (np.array): Array of predictors (sample, leadtime, y, x, predictor)
             targets (np.array): Array of targets (sample, leadtime, y, x)
         """
-        raise NotImplementedError()
+        dataset = self.source.load(index)
 
-    @property
-    def num_leadtimes(self):
-        return len(self.leadtimes)
-
-    @property
-    def num_predictors(self):
-        return len(self.predictor_names)
-
-    def write_debug(self, message):
-        if self.debug:
-            print(message)
-
-    @property
-    def num_samples(self):
-        return self.num_files * self.num_samples_per_file
-
-    @property
-    def num_patches(self):
-        return self.num_files * self.num_samples_per_file * self.num_patches_per_sample
-
-    @property
-    def num_patches_per_sample(self):
-        return self.num_x_patches_per_file * self.num_y_patches_per_file
-
-    @property
-    def num_patches_per_file(self):
-        return self.num_patches_per_sample * self.num_samples_per_file
-
-    @property
-    def num_x(self):
-        """Number of x coordinates in grid"""
-        return self.grid.size()[1]
-
-    @property
-    def num_y(self):
-        """Number of y coordinates in grid"""
-        return self.grid.size()[0]
-
-    def get_time_from_batch(self, batch):
-        """Which forecast reference time does this batch represent?"""
-        raise NotImplementedError()
-
-        batches_per_file = (
-            self.num_patches_per_sample * self.num_samples_per_file // self.batch_size
-        )
-        file_index = batch // batches_per_file
-        return self.times[batch]
+        return np.expand_dims(dataset.predictors, 0), np.expand_dims(dataset.static_predictors, 0), np.expand_dims(np.expand_dims(dataset.target_mean, 0), -1), dataset.time
 
     def __call__(self):
         """
@@ -291,174 +238,6 @@ class DataLoader:
         """
         for i in range(self.__len__()):
             yield tf.convert_to_tensor([i])
-
-    def __getitem__(self, idx):
-        """Retrive data for index idx
-
-        Args:
-            idx (int): Index to retrieve data for. Must be between 0 and __len__()
-
-        Returns:
-            p (tf.tensor): Tensor with predictor data (sample, leadtime, y, x, predictor)
-            t (tf.tensor): Tensor with target data (sample, leadtime, y, x, target)
-        """
-
-        # print(idx, self.sample_indices)
-        s_time = time.time()
-        ids = self.sample_indices[idx]
-        f = ids // self.num_samples_per_file
-        # print(f"#2 idx={idx}, ids={ids}, f={f}, in={f in self.cache}")
-        # if f in self.cache:
-        #     raise Exception()
-        # print(f, idx, self.num_samples_per_file, self.num_files)
-        s = idx % self.num_samples_per_file
-        assert f < self.num_files
-        # print(f"Getting {f} {s}")
-
-        if self.cache_size is not None and self.cache_size > 0 and f in self.cache:
-            # self.write_debug("Cache hit")
-            p, t = self.cache[f]
-        else:
-            # self.write_debug("Cache miss")
-            ss_time = time.time()
-            predictors, targets = self.load_data(f)
-            self.count_reads += 1
-
-            # Perform all processing steps here
-            times = [self.times[f]]
-            predictors, targets = self.process(predictors, targets, times)
-
-            if self.cache_size is not None and len(self.cache) >= self.cache_size:
-                # self.write_debug("Clearing cache")
-                self.cache.clear()
-
-            ss_time = time.time()
-            # p = tf.convert_to_tensor(predictors[[s], ...])
-            # t = tf.convert_to_tensor(targets[[s], ...])
-            p = tf.convert_to_tensor(predictors)
-            t = tf.convert_to_tensor(targets)
-            self.timing["convert"] += time.time() - ss_time
-            self.cache[f] = p, t
-            self.write_debug(f"Loaded and processed {idx} {time.time() - s_time}")
-            self.timing["total"] += time.time() - s_time
-
-        return p, t
-
-    def __len__(self):
-        """Returns the number of total samples in the dataset"""
-        return (
-            self.num_files
-        )  # self.num_patches # self.num_files * self.num_samples_per_file
-
-    def patch(self, predictors, targets):
-        """Reorganize predictors and targets into patches"""
-        if self.patch_size is not None:
-            s_time = time.time()
-            S, L, Y, X, P = predictors.shape
-            assert self.num_patches_per_sample > 0
-            new_predictors = np.zeros(
-                [
-                    S * self.num_patches_per_sample,
-                    L,
-                    self.patch_size,
-                    self.patch_size,
-                    P,
-                ],
-                np.float32,
-            )
-            new_targets = np.zeros(
-                [
-                    S * self.num_patches_per_sample,
-                    L,
-                    self.patch_size,
-                    self.patch_size,
-                    self.num_targets,
-                ],
-                np.float32,
-            )
-            count = 0
-            for s in range(S):
-                if self.num_random_patches is None:
-                    for x in range(self.num_x_patches_per_file):
-                        Ix = slice(x * self.patch_size, (x + 1) * self.patch_size)
-                        for y in range(self.num_y_patches_per_file):
-                            Iy = slice(y * self.patch_size, (y + 1) * self.patch_size)
-                            new_predictors[count, ...] = predictors[s, :, Iy, Ix, :]
-                            new_targets[count, ...] = targets[s, :, Iy, Ix, :]
-                            count += 1
-                else:
-                    full_num_y = predictors.shape[2]
-                    full_num_x = predictors.shape[3]
-                    for x in range(self.num_random_patches):
-                        xi = np.random.randint(0, full_num_x - self.patch_size)
-                        yi = np.random.randint(0, full_num_y - self.patch_size)
-                        Ix = slice(xi, xi + self.patch_size)
-                        Iy = slice(yi, yi + self.patch_size)
-                        new_predictors[count, ...] = predictors[s, :, Iy, Ix, :]
-                        new_targets[count, ...] = targets[s, :, Iy, Ix, :]
-                        count += 1
-
-            e_time = time.time()
-            self.timing["patching"] += e_time - s_time
-
-            return new_predictors, new_targets
-        else:
-            return predictors, targets
-
-    def process(self, predictors, targets, times):
-        """Any processing step that will be performed on data after it has been loaded
-
-        This can be for example, normalizing data, feature extraction, augmentation, etc.  Subclases
-        can override this
-        """
-        # print("#1", predictors.shape)
-        # print("Before")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        predictors, targets = self._process(predictors, targets, times)
-        # print("#2", predictors.shape)
-        predictors, targets = self.patch(predictors, targets)
-        # print("After")
-        # for i in range(predictors.shape[-1]):
-        #     print(np.nanmean(predictors[..., i]), np.nanstd(predictors[..., i]))
-        # sys.exit()
-
-        return predictors, targets
-
-    def _process(self, predictors, targets, times):
-        return predictors, targets
-
-    def get_xarray(self):
-        """Create xarray dataset.
-
-        Should only be used with datasets that fit in memory, since all data is loaded at once.
-
-        Note: If the loader creates patched data, then latitude and longitude will not be added to
-        output dataset.
-
-        Returns:
-            xarray.Dataset: xarray dataset with predictors, targets, and metadata
-        """
-        dataset = None
-        for i in range(len(self)):
-            predictors, targets = self[i]
-            samples_per_time = predictors.shape[0]
-            if dataset is None:
-                data_vars = dict()
-                shape = [len(self) * samples_per_time] + list(predictors.shape[1:])
-                data_vars["predictors"] = (["time", "leadtime", "y", "x", "predictor"], np.zeros(shape, np.float32), {})
-                shape = [len(self) * samples_per_time] + list(targets.shape[1:])
-                data_vars["targets"] = (["time", "leadtime", "y", "x", "target"], np.zeros(shape, np.float32), {})
-                dataset = xr.Dataset(data_vars)
-            dataset["predictors"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = predictors
-            dataset["targets"][range(i*samples_per_time, (i+1)*samples_per_time), ...] = targets
-        dataset["predictor"] = self.predictor_names
-        dataset["time"] = np.repeat(self.times, samples_per_time)
-        dataset["leadtime"] = self.leadtimes
-        if samples_per_time == 1:
-            dataset["longitudes"] = (["y", "x"], self.grid.get_lons(), {"units": "degree"})
-            dataset["latitudes"] = (["y", "x"], self.grid.get_lats(), {"units": "degree"})
-        return dataset
 
     def get_dataset(self, randomize_order=False, shard_size=None, shard_index=None):
         """Returns a tensorflow dataset that reads data in parallel
@@ -479,7 +258,7 @@ class DataLoader:
         if randomize_order:
             z = np.argsort(np.random.rand(self.num_files)).tolist()
         else:
-            z = list(range(self.num_files))
+            z = list(range(len(self.source)))
 
         if shard_size is not None and shard_index is not None:
             if shard_size <= shard_index:
@@ -488,29 +267,123 @@ class DataLoader:
         else:
             dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
 
-        def getitem(idx):
-            # A tensor is passed in, so decode it here
+        # dataset = tf.data.Dataset.from_generator(
+
+        def load_func(idx):
             idx = idx.numpy()[0]
-            return self[idx]
+            return self.load_from_source(idx)
+
+        def process_func(i, j):
+            return self.process(i, j, [1])
 
         # TODO: Split the file reading from the processing. That way the file reading can create a
         # number of batches, and the processing can be run in parallel on each sample in the batch.
 
-        f = lambda i: tf.py_function(
-            func=getitem, inp=[i], Tout=[tf.float32, tf.float32]
+        load_lambda = lambda i: tf.py_function(
+            func=load_func, inp=[i], Tout=[tf.float32, tf.float32, tf.float32, tf.float32]
         )
+        process_lambda = lambda i,j: tf.py_function(
+            func=process_func, inp=[i,j], Tout=[tf.float32, tf.float32]
+        )
+
+        def merge(predictors, static_predictors, targets, time):
+            # return predictors, targets
+            s = tf.repeat(tf.expand_dims(static_predictors, 1), tf.shape(predictors)[1], 1)
+            p = tf.concat((predictors, s), axis=4)
+            return p, targets
+
+        merge_lambda = lambda i,j,k,l: tf.py_function(func=merge, inp=[i,j,k,l], Tout=[tf.float32, tf.float32])
+
+        def patch(predictors, targets):
+            print("2#", type(predictors), tf.shape(predictors))
+            if self.patch_size is None:
+                return predictors, targets
+            else:
+                new = tf.extract_volume_patches(predictors, [1, 1, 5, 5, 1], [1, 1, 5, 5, 1], "SAME")
+                return new, targets
+
+                new_shape = [tf.shape(predictors)[0], tf.shape(predictors)[1], 12, tf.shape(predictors)[2] // 12, 12,
+                        tf.shape(predictors)[3]  // 12, tf.shape(predictors)[4]]
+                new = tf.reshape(predictors, new_shape)
+                c1 = tf.shape(predictors)[2:3] // self.patch_size
+                d1 = tf.shape(predictors)[3:4] // self.patch_size
+                return einops.rearrange(predictors, "a b (c1 c) (d1 d) e -> (a c1 d1) b c d e", c1=c1, d1=d1), einops.rearrange(targets, "a b (c1 c) (d1 d) e -> (a c1 d1) b c d e", c1=c1, d1=d1)
+
+        def normalize(predictors, targets):
+            corr = self.normalize_std
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            multiplicative = tf.tile(corr, tf.concat([tf.shape(predictors)[:-1], [1]], 0))
+            predictors *= multiplicative
+
+            corr = self.normalize_mean
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            corr = tf.expand_dims(corr, 0)
+            additive = tf.tile(corr, tf.concat([tf.shape(predictors)[:-1], [1]], 0))
+            predictors += additive
+
+            return predictors, targets
+
+        def extra_features(predictors, targets):
+            predictors = tf
+            return predictors, targets
+
+        def process(predictors, targets):
+            # Extra features
+            # for i in range(200):
+            #     extra = np.random.rand(*predictors.shape)
+            #     predictors = predictors * extra
+            # predictors = tf.concat((predictors, extra), axis=-1)
+            # for i in range(10):
+            #     predictors *= qq # tf.random.uniform(tf.shape(predictors))
+
+            return predictors, targets
+
+        patch_lambda = lambda i,j: tf.py_function(func=patch, inp=[i,j], Tout=[tf.float32, tf.float32])
+        process_lambda = lambda i,j: tf.py_function(func=process, inp=[i,j], Tout=[tf.float32, tf.float32])
 
         # If we add batch here, then in getitem we need idx.numpy()[0]
         dataset = dataset.batch(1)
-        dataset = dataset.map(f, num_parallel_calls=self.num_parallel_calls)
-
+        dataset = dataset.map(load_lambda)
+        # dataset = dataset.map(convert)
+        dataset = dataset.map(merge) # , num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(patch) # , num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.repeat(20)
+        # dataset = dataset.unbatch()
+        # dataset = dataset.batch(self.batch_size)
+        dataset = dataset.map(normalize, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(extra_features, num_parallel_calls=self.num_parallel_calls)
+        dataset = dataset.map(process_lambda, num_parallel_calls=self.num_parallel_calls)
         # Since a file can contain multiple samples/patches, we need to rebatch the dataset
-        dataset = dataset.unbatch()
-        dataset = dataset.batch(self.batch_size)
+        # dataset = dataset.unbatch()
+
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)  # .cache()
 
         return dataset
+
+    def __getitem__(self, idx):
+        """Retrive data for index idx
+
+        Args:
+            idx (int): Index to retrieve data for. Must be between 0 and __len__()
+
+        Returns:
+            p (tf.tensor): Tensor with predictor data (sample, leadtime, y, x, predictor)
+            t (tf.tensor): Tensor with target data (sample, leadtime, y, x, target)
+        """
+
+        s_time = time.time()
+        ids = self.sample_indices[idx]
+        f = ids // self.num_samples_per_file
+        s = idx % self.num_samples_per_file
+        assert f < len(self.source)
+
+        return self.load_from_source(f)
 
     def get_data_size(self):
         """Returns the number of bytes needed to store the full dataset"""
@@ -662,7 +535,7 @@ class DataLoader:
         return gridpp.Grid(lats, lons, elevs, lafs)
 
 
-class FileLoader(DataLoader):
+class FileLoader:
     def __init__(
         self,
         filenames,
@@ -993,7 +866,8 @@ class FileLoader(DataLoader):
             self.timing["reading"] += reading_time
             self.timing["reshaping_static_predictors"] += reshaping_static_predictors_time
             self.timing["other_loading"] += time.time() - s_time - reading_time - reshaping_static_predictors_time
-            return predictors, targets
+            times = self.times[index]
+            return predictors, targets, times
 
     def load_metadata(self, filenames):
         filename = filenames[0]
@@ -1267,6 +1141,8 @@ class FileLoader(DataLoader):
 
     def _process(self, predictors, targets, times):
         """This function needs to know what predictors to keep"""
+        print(predictors.shape, targets.shape, times)
+        print(type(predictors), type(targets), type(times))
 
         ss_time = time.time()
         predictors = self.compute_extra_features(predictors, times)
@@ -1397,7 +1273,7 @@ class FileLoader(DataLoader):
             return feature["type"]
 
 
-class FakeLoader(DataLoader):
+class FakeLoader:
     def generate_data(self):
         # predictors = np.random.randn(self.num_samples_per_file, *self.predictor_shape).astype(np.float32)
         # targets = np.random.randn(self.num_samples_per_file, *self.target_shape).astype(np.float32)

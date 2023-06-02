@@ -485,7 +485,11 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     total_loss = 0
     count = 0
 
-    if 0:
+    if 1:
+        q = model.evaluate(loader.get_dataset())
+        print(q)
+        print(len(q))
+    elif 1:
         """Using keras.predict and prefetching
 
         The advantage is that prefetching will work automatically
