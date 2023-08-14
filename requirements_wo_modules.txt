@@ -6,11 +6,13 @@ numpy
 pyyaml
 tensorflow==2.6.0
 mlflow==2.2.2
-protobuf==3.20.1
+protobuf==3.20.3
+google-auth==2.16.0
+oauthlib==3.2.2
+packaging==23.0
 tqdm
 scipy
 PyYAML
-horovod
 xarray
 dask
 # # -e git+ssh://git@github.com/ndryden/deep500.git#egg=deep500
