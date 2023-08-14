@@ -1,0 +1,36 @@
+name: ap1
+
+entry_points:
+  main:
+    parameters:
+      datadir:
+        type: string
+        default: /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/
+      datasize:
+        type: string
+        default: 5GB
+      mode:
+        type: string
+        default: train
+      batch_size:
+        type: int
+        default: 36
+      patch_size:
+        type: int
+        default: 32
+      num_parallel_calls:
+        type: int
+        default: 12
+      nepochs:
+        type: int
+        default: 3
+    command: >
+      python3 -u benchmark.py \
+        {datadir}/{datasize}/202???01T*.nc \
+        -m {mode} \
+        -b {batch_size} \
+        -p {patch_size} \
+        -j {num_parallel_calls} \
+        -e {nepochs} \
+        -val {datadir}/{datasize}/20200615T*.nc \
+        --norm {datadir}/normalization.yml
