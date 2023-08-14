@@ -15,6 +15,8 @@ import tensorflow as tf
 from tensorflow import keras
 import tensorflow.keras.backend as K
 
+import mlflow
+
 """ This script tests the performance of the Application 1 data loader
 
 Each file the data loader reads has predictors with dimensions (leadtime, y, x, predictor). This
@@ -126,7 +128,7 @@ def main():
         callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
     if main_process:
         timing_callback = TimingCallback()
-        callbacks += [timing_callback]
+        callbacks += [timing_callback, TrainingCallback()]
     model.compile(optimizer=optimizer, loss=loss)
     if main_process and args.mode in ["train", "infer"]:
         model.summary()
@@ -186,8 +188,11 @@ def main():
                 agg_time = curr_time - s_time
                 agg_size_gb = loader.size_gb / loader.num_batches * count
                 print(f"   Acc time: {agg_time:.2f} ")
+                mlflow.log_metrics({"Acc time": agg_time}, step=count)
                 print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
+                mlflow.log_metrics({"Average time per file in seconds": agg_time/curr_file_index}, step=count)
                 print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
+                mlflow.log_metrics({"Average performance in GB/s": agg_size_gb / agg_time}, step=count)
                 if with_horovod:
                     print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
 
@@ -211,8 +216,11 @@ def main():
                     agg_time = curr_time - s_time
                     agg_size_gb = loader.size_gb / loader.num_batches * count
                     print(f"   Acc time: {agg_time:.2f} ")
+                    mlflow.log_metrics({"Acc time": agg_time}, step=count)
                     print(f"   Avg time per file: {agg_time/curr_file_index:.2f} s")
+                    mlflow.log_metrics({"Average time per file in seconds": agg_time / curr_file_index}, step=count)
                     print(f"   Avg performance: {agg_size_gb / agg_time:.2f} GB/s")
+                    mlflow.log_metrics({"Average performance in GB/s": agg_size_gb / agg_time}, step=count)
                     if with_horovod:
                         print(f"   Agg avg performance: {agg_size_gb / agg_time * num_processes:.2f} GB/s")
 
@@ -920,6 +928,7 @@ class TimingCallback(tf.keras.callbacks.Callback):
     def on_epoch_end(self,epoch,logs = {}):
         self.end_times[epoch] = time.time()
         self.times.append(time.time() - self.s_time)
+        mlflow.log_metrics({"epoch time": self.times[epoch]}, step=epoch)
 
     def get_epoch_times(self):
         times = list()
@@ -933,6 +942,18 @@ class TimingCallback(tf.keras.callbacks.Callback):
         return times
 
     # def on_train_end(self,logs = {}):
+
+class TrainingCallback(tf.keras.callbacks.Callback):
+    def on_train_begin(self, logs=None):
+        self.training_loss = dict()
+        self.validation_loss= dict()
+
+    def on_epoch_end(self, epoch, logs=None):
+        self.training_loss["training loss"] = logs["loss"]
+        if "val_loss" in logs:
+            self.validation_loss["validation loss"] = logs["val_loss"]
+
+        mlflow.log_metrics({**self.training_loss, **self.validation_loss}, step=epoch)
 
 """
 ML model
