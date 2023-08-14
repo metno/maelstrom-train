@@ -5,7 +5,7 @@ entry_points:
     parameters:
       datadir:
         type: string
-        default: /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/
+        default: /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature
       datasize:
         type: string
         default: 5GB
