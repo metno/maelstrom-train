@@ -113,6 +113,9 @@ def main():
     loader_num_files = loader.num_files * num_processes
 
     input_shape = loader.batch_predictor_shape[1:]
+    # Set the Y, X dimensions to None
+    input_shape[1] = None
+    input_shape[2] = None
     num_outputs = 3
     model = Unet(input_shape, num_outputs, levels=6)
     learning_rate = 1e-3
@@ -465,16 +468,16 @@ class Ap1Loader:
             dataset = dataset.map(self.feature_extraction, num_parallel_calls)
             # Predictor shape: 1, 2321, 1796, 16
 
+            # Sutract the raw forecast from the targets
+            dataset = dataset.map(self.diff, num_parallel_calls)
+            # Predictor shape: 1, 2321, 1796, 16
+
             # Normalize the predictors
             dataset = dataset.map(self.normalize, num_parallel_calls)
             # Predictor shape: 1, 2321, 1796, 16
 
             # Split the y,x dimensions into patches of size 256x256
             dataset = dataset.map(self.patch, num_parallel_calls)
-            # Predictor shape: 1, 63, 256, 256, 16
-
-            # Sutract the raw forecast from the targets
-            dataset = dataset.map(self.diff, num_parallel_calls)
             # Predictor shape: 1, 63, 256, 256, 16
         else:
             # Perform the 4 above steps in one function
@@ -602,8 +605,20 @@ class Ap1Loader:
         features = [predictors, static_predictors]
         with tf.device(self.device):
             shape = list(predictors.shape[:-1]) + [1]
-            for f in range(self.num_extra_features):
+            for name in self.extra_predictor_names:
                 feature = np.zeros(shape, np.float32)
+                if name == "leadtime":
+                    val = tf.range(shape[0])[:, None, None, None]
+                    feature = tf.tile(val, [1, shape[1], shape[2], shape[3]])
+                elif name == "x":
+                    val = tf.range(shape[2])[None, None, :, None]
+                    feature = tf.tile(val, [shape[0], shape[1], 1, shape[3]])
+                elif name == "y":
+                    val = tf.range(shape[1])[None, None, :, None]
+                    feature = tf.tile(val, [shape[0], 1, shape[2], shape[3]])
+                else:
+                    raise ValueError(f"Unknown feature {name}")
+
                 features += [feature]
 
             predictors = tf.concat(features, axis=-1)
@@ -752,9 +767,9 @@ class Ap1Loader:
         """Perform all processing steps in one go"""
         with tf.device(self.device):
             p, t = self.feature_extraction(predictors, static_predictors, targets)
+            p, t = self.diff(p, t)
             p, t = self.normalize(p, t)
             p, t = self.patch(p, t)
-            p, t = self.diff(p, t)
         return p, t
 
     @map_decorator2_to_2
