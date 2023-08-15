@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+import math
 
 import numpy as np
 import tqdm
@@ -21,6 +22,7 @@ try:
 except Exception as e:
     print("Cannot load deep500")
     do_deep500 = False
+do_deep500 = False
 
 # os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
 # os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
@@ -32,13 +34,18 @@ np.random.seed(1000)
 
 import maelstrom
 
+with_horovod = maelstromm.check_horovod()
+if with_horovod:
+    # Import it 
+    print("Running with horovod")
+    import horovod.tensorflow as hvd
 
 def main():
     # fmt: off
     parser = argparse.ArgumentParser()
     parser.add_argument( "--config", type=maelstrom.load_yaml, help="Configuration file containing output paths, etc", required=True, nargs="*",)
     parser.add_argument( "-j", type=int, help="Number of threads to train with", dest="num_threads",)
-    parser.add_argument( "--hardware", default="cpu", help="Run on GPUS?", choices=["cpu", "gpu", "multigpu"],)
+    parser.add_argument( "--hardware", default="gpu", help="What hardware to run on?", choices=["cpu", "gpu"],)
     parser.add_argument( "-m", help="Only run these models", dest="subset_models", nargs="*", required=True,)
     parser.add_argument( "-w", help="Print weights of the model", dest="print_weights", action="store_true",)
     parser.add_argument( "-o", default="results/%N_%T", help="Output folder", dest="output_folder",)
@@ -57,33 +64,26 @@ def main():
         np.random.seed(args.seed)
 
     # Deal with GPUs
-    multigpu = False
     main_process = True
-    if args.hardware == "multigpu":
-        import horovod.tensorflow as hvd
-
-        hvd.init()
-        main_process = hvd.local_rank() == 0
-        multigpu = True
-
-        gpus = tf.config.experimental.list_physical_devices("GPU")
-        if main_process:
-            print("Num GPUs Available: ", len(gpus))
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        if gpus:
-            tf.config.experimental.set_visible_devices(
-                gpus[hvd.local_rank()], "GPU"
-            )
-        print("Current rank", hvd.local_rank())
-    elif args.hardware == "gpu":
-        gpus = tf.config.experimental.list_physical_devices("GPU")
-        print("Num GPUs Available: ", len(gpus))
-    elif args.hardware == "cpu":
+    if args.hardware == "cpu":
         # Force CPU usage, even if GPUs are available
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     else:
-        raise ValueError(f"Unknown hardware {args.hardware}")
+        gpus = tf.config.experimental.list_physical_devices("GPU")
+        print("Num GPUs Available: ", len(gpus))
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        if with_horovod:
+            hvd.init()
+            main_process = hvd.rank() == 0
+
+            if main_process:
+                print("Num GPUs Available: ", len(gpus))
+            if len(gpus) > 1:
+                tf.config.experimental.set_visible_devices(
+                    gpus[hvd.local_rank()], "GPU"
+                )
+            print("Current rank", hvd.local_rank())
 
     config = maelstrom.merge_configs(args.config)
 
@@ -124,11 +124,11 @@ def main():
     # Model training
     epochs = config["training"]["num_epochs"]
 
-    if multigpu:
+    if with_horovod:
         # print("SHARDING", hvd.size(), hvd.local_rank())
         # dataset = dataset.shard(num_shards=hvd.size(), index=hvd.local_rank())
         # print(type(dataset))
-        dataset = loader.get_dataset(True, hvd.size(), hvd.local_rank())
+        dataset = loader.get_dataset(True, repeat=epochs, shard_size=hvd.size(), shard_index=hvd.local_rank())
     else:
         dataset = loader.get_dataset(True, repeat=epochs)
 
@@ -154,7 +154,7 @@ def main():
         num_outputs,
         config["models"],
         args.subset_models,
-        args.hardware in ["multigpu"],
+        with_horovod,
     )
 
     if len(models) == 0:
@@ -173,7 +173,7 @@ def main():
 
         model = model_config["model"]
         optimizer = maelstrom.optimizer.get(**config["training"]["optimizer"])
-        if multigpu:
+        if with_horovod:
             optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
                     average_aggregated_gradients=True)
         model.compile(
@@ -210,15 +210,17 @@ def main():
             timing_callback = maelstrom.callback.Timing(logger)
         callbacks = list()
         if args.do_train:
-            if multigpu:
+            validation_frequency = get_validation_frequency(config, loader)
+            if with_horovod:
                 callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
                 callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
+                validation_frequency = math.ceil(validation_frequency / hvd.size())
             if main_process:
+                print(f"Validation frequency: {validation_frequency}")
                 callbacks += [
                     maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
                 ]
                 callbacks += [timing_callback]
-                validation_frequency = get_validation_frequency(config, loader)
 
                 checkpoint_metric = 'loss'
                 if do_validation and main_process:
@@ -240,10 +242,13 @@ def main():
                 # run.
                 if main_process:
                     checkpoint_filepath = f"{output_folder}/checkpoint"
+
+                    # NOTE: save_freq must be "epoch", otherwise this callback gets run before the
+                    # end of the epoch, which is when the validation is computed.
                     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                         filepath=checkpoint_filepath,
                         save_weights_only=True,
-                        save_freq=validation_frequency,
+                        save_freq="epoch", # validation_frequency,
                         monitor=checkpoint_metric,
                         verbose=1,
                         mode='min',
@@ -269,21 +274,17 @@ def main():
 
         # This is the keras way of running validation. However, now we do validation via a
         # validation callback above instead.
-        keras_epochs = epochs
+        kwargs = {}
+        if with_horovod:
+            keras_epochs = int(epochs * loader.num_batches // hvd.size() // (validation_frequency))
+            kwargs["steps_per_epoch"] = validation_frequency
+            kwargs["verbose"] = main_process
+        else:
+            keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
+            kwargs["steps_per_epoch"] = validation_frequency
+
         if do_validation:
             kwargs = {"validation_data": dataset_val}
-            # print("EPOCH", epochs)
-            # print("NUM PATCHES", loader.num_patches)
-            # print("NUM PATCHES PER FILE", loader.num_patches_per_file)
-            # print("VALIDATION FREQUENCY", validation_frequency)
-            keras_epochs = int(epochs * loader.num_patches // (validation_frequency))
-            # print("Number of keras epochs", keras_epochs)
-
-            if "steps_per_epoch" in config["training"]:
-                kwargs["steps_per_epoch"] = config["training"]["steps_per_epoch"]
-        else:
-            kwargs = {}
-        # kwargs["verbose"] = main_process
 
         if main_process:
             logger.add("Timing", "Training", "Start_time", int(time.time()))
@@ -311,8 +312,15 @@ def main():
             # NOTE: When keras run with a generator with unknown length, we need to tell keras how
             # long it is. DO this by specifying steps_per_epoch, and then making dataset repeat
             # itself.
+            ss_time = time.time()
+            if main_process:
+                print(epochs, keras_epochs, validation_frequency)
+                print("Callbacks:")
+                for callback in callbacks:
+                    print("   ", callback)
             history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
-                    steps_per_epoch=validation_frequency, **kwargs)
+                    **kwargs)
+            print(f"Training time: {time.time() - ss_time}")
             if main_process and do_deep500:
                 tmr.complete_all()
                 tmr.print_all_time_stats()
@@ -409,7 +417,7 @@ def get_loaders(config):
 
 
 def get_models(loader, num_outputs, configs, subset_models=None, multi=False):
-    input_shape = loader.predictor_shape
+    input_shape = [1] + loader.predictor_shape[1:]
     if multi:
         gpus = tf.config.list_logical_devices("GPU")
         strategy = tf.distribute.MirroredStrategy(gpus[0:2])
@@ -653,11 +661,12 @@ def get_validation_frequency(config, loader):
             # if freq == 1:
             #     validation_frequency = None
             # else:
-            validation_frequency = (
-                loader.num_patches_per_file * loader.num_files * freq
+            validation_frequency = int(
+                loader.num_samples * freq /
+                config["loader"]["batch_size"]
             )
         elif freq_units == "file":
-            validation_frequency = loader.num_patches_per_file * freq
+            validation_frequency = loader.num_samples_per_file * freq
         elif freq_units == "batch":
             validation_frequency = freq
         else:

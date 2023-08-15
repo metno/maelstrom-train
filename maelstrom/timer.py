@@ -19,6 +19,9 @@ class Timer:
         self.results[name] += value
         self.count[name] += 1
 
+    def items(self):
+        return self.results.items()
+
     def __str__(self):
         output = ""
         output += "average Key count\n"

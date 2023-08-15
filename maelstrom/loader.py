@@ -10,27 +10,7 @@ import xarray as xr
 import yaml
 
 import maelstrom
-
-def map_decorator1(func):
-    """Decorator to wrap a 1-argument function as a tf.py_function"""
-    def wrapper(self, i):
-        return tf.py_function(
-                lambda i: func(self, i),
-                inp=(i,),
-                Tout=(tf.uint32,)
-                )
-    return wrapper
-
-
-def map_decorator2(func):
-    """Decorator to wrap a 2-argument function as a tf.py_function"""
-    def wrapper(self, i, j):
-        return tf.py_function(
-                lambda i, j: func(self, i, j),
-                inp=(i, j),
-                Tout=(tf.float32, tf.float32)
-                )
-    return wrapper
+from decorator import *
 
 class Loader:
     """Data loader class
@@ -58,6 +38,7 @@ class Loader:
         debug=False,
         fake=False,
         to_gpu=True,
+        with_leadtime=True,
     ):
         """Initialize data loader
         
@@ -80,12 +61,14 @@ class Loader:
             debug (bool): Turn on debugging information
             fake (bool): Generate fake data, instead of reading from file
             to_gpu (bool): Move final tensors to GPU in the data processing pipeline
+            with_leadtime (bool): Generate data with the whole leadtime dimension
         """
         self.show_debug = debug
         self.filenames = list()
         self.extra_features = extra_features
         for f in filenames:
             self.filenames += glob.glob(f)
+        print(self.filenames)
         self.limit_predictors = limit_predictors
         self.limit_leadtimes = limit_leadtimes
         self.x_range = x_range
@@ -96,20 +79,29 @@ class Loader:
         self.prefetch = prefetch
         self.cache = cache
         self.load_metadata(self.filenames[0])
-        self.logger = maelstrom.timer.Timer("test.txt")
+        self.timing = maelstrom.timer.Timer("test.txt")
         self.normalization = normalization
         self.fake = fake
         self.num_parallel_calls = num_parallel_calls
 
         self.load_coefficients()
 
-        self.timing = collections.defaultdict(lambda: 0)
         self.count_reads = 0
         self.count_start_processing = 0
         self.count_done_processing = 0
 
+        self.dataset = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time")
+        limit = self.get_dimension_limits(self.dataset)
+        self.dataset = self.dataset.isel(**limit)
+
         # Initialize a timer so that we can track overall processing time
-        self.s_time = time.time()
+        self.device = "CPU:0"
+        self.start_time = time.time()
+        self.with_leadtime = with_leadtime
+
+        # Cache the normalization coefficients
+        self.normalize_add = None
+        self.normalize_factor = None
 
     @staticmethod
     def from_config(config):
@@ -130,7 +122,7 @@ class Loader:
                     kwargs[range_variable] = range(int(start), int(end))
         return Loader(**kwargs)
 
-    def get_dataset(self, randomize_order=False, num_parallel_calls=1, repeat=None):
+    def get_dataset(self, randomize_order=False, num_parallel_calls=1, repeat=None, shard_size=None, shard_index=None):
         """Returns a tf.data object that streams data from disk
 
         Args:
@@ -145,31 +137,43 @@ class Loader:
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
 
-        # Get a list of numbers
-        if randomize_order:
-            z = np.argsort(np.random.rand(self.num_files)).tolist()
+        if shard_size is None:
+            dataset = tf.data.Dataset.range(self.num_files)
         else:
-            z = list(range(self.num_files))
-        dataset = tf.data.Dataset.from_generator(lambda: z, tf.uint32)
+            start = shard_index * math.ceil(self.num_files // shard_size)
+            end = (shard_index + 1) * math.ceil(self.num_files // shard_size)
+            print("SHARD", shard_index, start, end)
+            dataset = tf.data.Dataset.range(start, end)
+        if randomize_order:
+            dataset = dataset.shuffle(10000)
 
         if repeat is not None:
             dataset = dataset.repeat(repeat)
 
         # Read the data from file
-        load_file = lambda i: tf.py_function(func=self.load_file, inp=[i], Tout=[tf.float32, tf.float32])
-        dataset = dataset.map(load_file, num_parallel_calls=1)
+        dataset = dataset.map(self.read, num_parallel_calls=1)
+        dataset = dataset.map(self.expand_static_predictors, num_parallel_calls=1)
+
+        # Rebatch the leadtime
+        dataset = dataset.unbatch()
+        if self.with_leadtime:
+            # if num_parallel_calls != tf.data.AUTOTUNE:
+            #     dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
+            dataset = dataset.batch(1)
+        else:
+            dataset = dataset.batch(1)
         # Shape: (leadtime, y, x, predictor)
 
         dataset = dataset.map(self.print_start_processing)
 
         # Split leadtime into samples
-        if num_parallel_calls != tf.data.AUTOTUNE:
-            dataset = dataset.unbatch()
-            dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
-            # Shape: (leadtime, y, x, predictor)
+        # if num_parallel_calls != tf.data.AUTOTUNE:
+        #     dataset = dataset.unbatch()
+        #     dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
+        #     # Shape: (leadtime, y, x, predictor)
 
         # Perform various processing steps
-        if 1:
+        if 0:
             dataset = dataset.map(self.process, num_parallel_calls=num_parallel_calls)
         else:
             # Same steps but split into smaller steps
@@ -183,36 +187,44 @@ class Loader:
         # Shape: (leadtime, patch, y_patch, x_patch, predictor)
 
         # Collect leadtimes
-        if num_parallel_calls != tf.data.AUTOTUNE:
+        if self.with_leadtime:
             dataset = dataset.unbatch()
             dataset = dataset.batch(self.num_leadtimes)
             # Shape: (leadtime, patch, y_patch, x_patch, predictor)
 
-        # Move patch into sample dimension
-        dataset = dataset.map(self.reorder, num_parallel_calls=num_parallel_calls)
-        dataset = dataset.map(self.print_done_processing)
-        # Shape: (patch, leadtime, y_patch, x_patch, predictor)
+            # Move patch into sample dimension
+            dataset = dataset.map(self.reorder, num_parallel_calls=num_parallel_calls)
+            # dataset = dataset.map(self.print_done_processing)
+            # Shape: (patch, leadtime, y_patch, x_patch, predictor)
 
-        # Split patches into samples
-        dataset = dataset.unbatch()
+            # Split patches into samples
+            dataset = dataset.unbatch()
+        else:
+            dataset = dataset.unbatch()
+            dataset = dataset.unbatch()
+            dataset = dataset.batch(1)
         # Shape: (leadtime, y_patch, x_patch, predictor)
 
         # Cache tensors on the CPU (we don't want caching on GPU)
-        if self.cache:
-            dataset = dataset.cache()
-
-        # Move tensor to GPU. We do this at the end to save GPU memory
-        if self.to_gpu:
-            dataset = dataset.map(self.to_gpu, num_parallel_calls=num_parallel_calls)
 
         # Add sample dimension
         dataset = dataset.batch(self.batch_size)
         # Shape: (batch_size, leadtime, y_patch, x_patch, predictor)
 
+        # Move tensor to GPU. We do this at the end to save GPU memory
+        if self.to_gpu:
+            dataset = dataset.map(self.to_gpu, num_parallel_calls=num_parallel_calls)
+
         if self.prefetch is not None:
             dataset = dataset.prefetch(self.prefetch)
 
-        self.s_time = time.time()
+        dataset = dataset.prefetch(1)
+
+        # dataset = dataset.cache()
+        if self.cache:
+            dataset = dataset.cache()
+
+        self.start_time = time.time()
         return dataset
 
 
@@ -221,21 +233,38 @@ class Loader:
     """
     @property
     def predictor_shape(self):
-        return [
-            self.num_leadtimes,
-            self.num_y,
-            self.num_x,
-            self.num_predictors,
-        ]
+        """The shape of a predictor for one sample"""
+        if self.with_leadtime:
+            return [
+                self.num_leadtimes,
+                self.num_y,
+                self.num_x,
+                self.num_predictors,
+            ]
+        else:
+            return [
+                1,
+                self.num_y,
+                self.num_x,
+                self.num_predictors,
+            ]
 
     @property
     def target_shape(self):
-        return [
-            self.num_leadtimes,
-            self.num_y,
-            self.num_x,
-            self.num_targets,
-        ]
+        if self.with_leadtime:
+            return [
+                self.num_leadtimes,
+                self.num_y,
+                self.num_x,
+                self.num_targets,
+            ]
+        else:
+            return [
+                1,
+                self.num_y,
+                self.num_x,
+                self.num_targets,
+            ]
 
     @property
     def num_files(self):
@@ -256,6 +285,35 @@ class Loader:
     def num_leadtimes(self):
         """Returns the number of leadtimes in the dataset"""
         return len(self.leadtimes)
+
+    @property
+    def num_samples_per_file(self):
+        if self.with_leadtime:
+            return self.num_patches_per_file
+        else:
+            return self.num_patches_per_file * self.num_leadtimes
+
+    @property
+    def num_samples(self):
+        return self.num_samples_per_file * self.num_files
+
+    @property
+    def num_batches(self):
+        return math.ceil(self.num_samples / self.batch_size)
+
+    @property
+    def num_batches_per_file(self):
+        return math.ceil(self.num_samples_per_file / self.batch_size)
+
+    @property
+    def batch_predictor_shape(self):
+        shape = [self.batch_size] + [i for i in self.predictor_shape]
+        if not self.with_leadtime:
+            shape[1] = 1
+        shape[2] = self.patch_size
+        shape[3] = self.patch_size
+        shape[-1] = self.predictor_shape[-1] + self.static_predictor_shape[-1] + self.num_extra_features
+        return shape
 
     @property
     def num_x(self):
@@ -288,99 +346,67 @@ class Loader:
     """
     Functions used by the data processing pipeline
     """
-    def load_file(self, index, leadtime_indices=None):
-        s_time = time.time()
-        print("%.4f" % (time.time() - self.s_time), "Start reading", index.numpy(), self.filenames[index])
-        if self.fake:
-            p, t = self.generate_fake_data(index)
-        else:
-            p, t = self.parse_file(self.filenames[index])
-
-        print("%.4f" % (time.time() - self.s_time), "Done reading", index.numpy()) # , time.time() - s_time)
-
-        self.count_reads += 1
-        return p, t
-
-    def parse_file(self, filename, leadtime_indices=None):
+    @map_decorator1_to_3
+    def read(self, index):
         """Read data from NetCDF
 
         Args:
-            filename (str): Read data from this filename
-            leadtimes (list): Only read these leadtimes. If None, read all
+            index (int): Read data from this time index
 
         Returns:
             tf.Tensor: 4D array of predictors
+            tf.Tensor: 4D array of static_predictors
             tf.Tensor: 4D array of observations
         """
         s_time = time.time()
-        self.debug("Loading", filename)
-        dataset = xr.open_dataset(filename, decode_timedelta=False)
-        Ip = range(len(dataset.predictor))
+        index = index.numpy()
+        # self.print(f"Start reading index={index}")
+        with tf.device(self.device):
+            predictors = self.dataset["predictors"][index, ...].values
+            static_predictors = self.dataset["static_predictors"][index, ...].values
+            targets = self.dataset["target_mean"][index, ...].values
+            targets = tf.expand_dims(targets, -1)
 
-        # Figure out which dimensions should be limited
-        limit = self.get_dimension_limits(dataset)
-        dataset = dataset.isel(**limit)
+            # Force explicit conversion here, so that we can account the time it takes
+            # Otherwise the conversion happens when the function returns
+            predictors = tf.convert_to_tensor(predictors)
+            static_predictors = tf.convert_to_tensor(static_predictors)
+            targets = tf.convert_to_tensor(targets)
 
-        predictors = dataset["predictors"]
+        e_time = time.time()
+        self.timing.add("read", time.time() - s_time)
+        return predictors, static_predictors, targets
 
-        # Merge static predictors
-        if len(dataset.static_predictor) > 0:
-            static_predictors0 = dataset["static_predictors"]
-            static_predictors = np.zeros(list(predictors.shape[0:-1]) + [static_predictors0.shape[-1]], np.float32)
-            for lt in range(predictors.shape[0]):
-                static_predictors[lt, ...] = static_predictors0
-            predictors = np.concatenate((predictors, static_predictors), axis=3)
-
-        targets = dataset["target_mean"]
-        targets = np.expand_dims(targets, 3)
-
-        dataset.close()
-
-        # p, t = predictors, targets
-        self.debug("Finished parsing", time.time() - s_time)
-        self.logger.add("parse", time.time() - s_time)
+    @map_decorator3_to_3
+    def expand_static_predictors(self, predictors, static_predictors, targets):
+        """Copies static predictors to leadtime dimension"""
         s_time = time.time()
-        with tf.device("CPU:0"):
-            t = tf.convert_to_tensor(targets)
-            del targets
-            p = tf.convert_to_tensor(predictors)
-            del predictors
-        self.debug("Convert", time.time() - s_time)
-        self.logger.add("convert", time.time() - s_time)
-        # maelstrom.util.print_memory_usage()
-        return p, t
+        # self.print("Start processing")
+        # print(predictors.shape, static_predictors.shape, targets.shape)
+        with tf.device(self.device):
+            shape = [predictors.shape[0], 1, 1, 1]
+            static_predictors = tf.expand_dims(static_predictors, 0)
+            static_predictors = tf.tile(static_predictors, shape)
+        self.timing.add("expand", time.time() - s_time)
+        return predictors, static_predictors, targets
 
-    def generate_fake_data(self, index):
-        self.debug("Loading", index)
-        s_time = time.time()
-        shape = [self.num_leadtimes, self.num_y_input, self.num_x_input, self.num_input_predictors]
-        p = np.zeros(shape, np.float32)
-        t = np.zeros([self.num_leadtimes, self.num_y_input, self.num_x_input, 1], np.float32)
-        self.logger.add("parse", time.time() - s_time)
 
-        s_time = time.time()
-        with tf.device("CPU:0"):
-            p = tf.convert_to_tensor(p)
-            t = tf.convert_to_tensor(t)
-        self.logger.add("convert", time.time() - s_time)
-        return p, t
-
-    @map_decorator2
-    def process(self, predictors, targets):
+    @map_decorator3_to_2
+    def process(self, predictors, static_predictors, targets):
         """Perform all processing steps in one function.
 
         This is an alterative to calling each function separately.
         """
         s_time = time.time()
-        p, t = self.extract_features(predictors, targets)
+        p, t = self.extract_features(predictors, static_predictors, targets)
         p, t = self.patch(p, t)
         p, t = self.diff(p, t)
         p, t = self.normalize(p, t)
         # print("End process", time.time() - s_time)
         return p, t
 
-    @map_decorator2
-    def extract_features(self, predictors, targets):
+    @map_decorator3_to_2
+    def extract_features(self, predictors, static_predictors, targets):
         """Extract features and append to predictors
 
         Input: leadtime, y, x, predictor
@@ -388,7 +414,7 @@ class Loader:
         """
         s_time = time.time()
         with tf.device("CPU:0"):
-            p = [predictors]
+            p = [predictors, static_predictors]
             shape = predictors.shape
             for f, feature in enumerate(self.extra_features):
                 feature_type = feature["type"]
@@ -406,10 +432,10 @@ class Loader:
                 p += [curr]
 
             p = tf.concat(p, axis=3)
-        self.logger.add("extract", time.time() - s_time)
+        self.timing.add("extract", time.time() - s_time)
         return p, targets
 
-    @map_decorator2
+    @map_decorator2_to_2
     def patch(self, predictors, targets):
         """Decompose grid into patches
 
@@ -417,7 +443,7 @@ class Loader:
         Output: leadtime, patch, y_patch, x_patch, predictor
         """
         s_time = time.time()
-        self.debug("Start patch", time.time() - self.s_time, predictors.shape)
+        self.debug("Start patch", time.time() - self.start_time, predictors.shape)
 
         if self.patch_size is None:
             # A patch dimension is still needed when patching is not done
@@ -471,11 +497,11 @@ class Loader:
             p = patch_tensor(predictors, self.patch_size)
             t = patch_tensor(targets, self.patch_size)
 
-        self.logger.add("patch", time.time() - s_time)
-        self.debug("Done patching", time.time() - self.s_time, p.shape)
+        self.timing.add("patch", time.time() - s_time)
+        self.debug("Done patching", time.time() - self.start_time, p.shape)
         return p, t
 
-    @map_decorator2
+    @map_decorator2_to_2
     def diff(self, predictors, targets):
         """Subtract the raw forecast from predictors and targets
 
@@ -488,10 +514,10 @@ class Loader:
         Ip = self.raw_predictor_index
         v = tf.expand_dims(predictors[..., Ip], -1)
         t = tf.math.subtract(targets, v)
-        self.logger.add("diff", time.time() - s_time)
+        self.timing.add("diff", time.time() - s_time)
         return predictors, t
 
-    @map_decorator2
+    @map_decorator2_to_2
     def normalize(self, predictors, targets):
         """Normalize predictors
 
@@ -500,82 +526,86 @@ class Loader:
         """
         s_time = time.time()
         if self.coefficients is None:
-            self.logger.add("normalize", time.time() - s_time)
+            self.timing.add("normalize", time.time() - s_time)
             return predictors, targets
 
         self.debug("Normalize", predictors.shape, self.coefficients.shape)
 
         with tf.device("CPU:0"):
-            a = self.coefficients[:, 0]
-            s = self.coefficients[:, 1]
-            shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
+            if self.normalize_add is None or self.normalize_factor is None:
+                a = self.coefficients[:, 0]
+                s = self.coefficients[:, 1]
+                shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
 
-            def expand_array(a, shape):
-                """Expands array a so that it has the shape"""
-                if 1:
-                    # Use if unbatch has not been run
-                    a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
-                else:
-                    a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
-                a = tf.tile(a, shape)
-                return a
+                def expand_array(a, shape):
+                    """Expands array a so that it has the shape"""
+                    if 1:
+                        # Use if unbatch has not been run
+                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
+                    else:
+                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
+                    a = tf.tile(a, shape)
+                    return a
 
-            a = expand_array(a, shape)
-            s = expand_array(s, shape)
+                self.normalize_add = expand_array(a, shape)
+                self.normalize_factor = expand_array(s, shape)
 
-            p = tf.math.subtract(predictors, a)
-            p = tf.math.divide(p, s)
+            p = tf.math.subtract(predictors, self.normalize_add)
+            p = tf.math.divide(p, self.normalize_factor)
 
-        self.logger.add("normalize", time.time() - s_time)
+        self.timing.add("normalize", time.time() - s_time)
         return p, targets
 
-    @map_decorator2
+    @map_decorator2_to_2
     def reorder(self, predictors, targets):
         """Move patch dimension to be the first dimension
 
         Input: leadtime, patch, y, x, predictor
         Output: patch, leadtime, y, x, predictor
         """
-        self.debug("Reorder start", time.time() - self.s_time, predictors.shape)
+        self.debug("Reorder start", time.time() - self.start_time, predictors.shape)
         s_time = time.time()
         with tf.device("CPU:0"):
             p = tf.transpose(predictors, [1, 0, 2, 3, 4])
             t = tf.transpose(targets, [1, 0, 2, 3, 4])
-        self.logger.add("reorder", time.time() - s_time)
-        self.debug("Done reordering", time.time() - self.s_time, p.device)
+        self.timing.add("reorder", time.time() - s_time)
+        self.debug("Done reordering", time.time() - self.start_time, p.device)
         return p, t
 
-    @map_decorator2
+    @map_decorator2_to_2
     def to_gpu(self, p, t):
         """Copy tensors to GPU"""
         s_time = time.time()
-        p, t = tf.identity(p), tf.identity(t)
+        # p, t = tf.identity(p), tf.identity(t)
+        p = tf.convert_to_tensor(p)
+        t = tf.convert_to_tensor(t)
         self.debug("Moving ", p.shape, "to device", p.device)
-        self.logger.add("to_gpu", time.time() - s_time)
-        # print("Moved to gpu", time.time() - self.s_time, time.time() - s_time)
+        self.timing.add("to_gpu", time.time() - s_time)
+        # print("TO GPU", p.shape, t.shape)
+        # print("Moved to gpu", time.time() - self.start_time, time.time() - s_time)
         return p, t
 
-    @map_decorator2
+    @map_decorator2_to_2
     def print_shape(self, p, t):
         """Helper function to print out the shape of tensors"""
         print(p.shape, t.shape)
         return p, t
 
-    @map_decorator2
-    def print_start_processing(self, p, t):
-        print("%.4f" % (time.time() - self.s_time), "Start processing", self.count_start_processing)
+    @map_decorator3_to_3
+    def print_start_processing(self, p, s, t):
+        # print("%.4f" % (time.time() - self.start_time), "Start processing", self.count_start_processing)
         self.count_start_processing += 1
-        return p, t
+        return p, s, t
 
-    @map_decorator2
+    @map_decorator2_to_2
     def print_done_processing(self, p, t):
-        print("%.4f" % (time.time() - self.s_time), "Done processing", self.count_done_processing)
+        print("%.4f" % (time.time() - self.start_time), "Done processing", self.count_done_processing)
         self.count_done_processing += 1
         return p, t
 
-    @map_decorator1
+    @map_decorator1_to_1
     def print_start_time(self, p):
-        print("Start", p.numpy(), "%.4f" % (time.time() - self.s_time))
+        print("Start", p.numpy(), "%.4f" % (time.time() - self.start_time))
         return p
 
     @property
@@ -586,7 +616,7 @@ class Loader:
             raw_predictor_index = self.predictor_names.index("air_temperature_2m")
             return raw_predictor_index
 
-    @map_decorator2
+    @map_decorator2_to_2
     def convert(self, p, t):
         """Convert numpy arrays to tensors"""
         p, t = tf.convert_to_tensor(p), tf.convert_to_tensor(t)
@@ -665,17 +695,22 @@ class Loader:
         d["Predictor shape"] = ", ".join(["%d" % i for i in self.predictor_shape])
         d["Target shape"] = ", ".join(["%d" % i for i in self.target_shape])
         d["Num files"] = self.num_files
+        d["Num leadtimes"] = self.num_leadtimes
 
         if self.patch_size is None:
             d["Num samples"] = self.num_files * self.num_patches_per_file
         else:
             d["Patches per file"] = self.num_patches_per_file
+            d["Samples per file"] = self.num_samples_per_file
             d["Num patches"] = self.num_patches
+            d["Num samples"] = self.num_samples
             d["Patch size"] = self.patch_size
+            d["Num batches"] = self.num_batches
+            d["Batches per file"] = self.num_batches_per_file
         d["Batch size"] = self.batch_size
         d["Num predictors"] = self.num_predictors
         d["Num targets"] = self.num_targets
-        d["Patch size (MB)"] = self.get_data_size() / 1024**2 / self.num_patches
+        d["Batch size (MB)"] = self.get_data_size() / 1024**2 / self.num_samples * self.batch_size
         d["Total size (GB)"] = self.get_data_size() / 1024**3
 
         d["Predictors"] = list()
@@ -736,11 +771,11 @@ class Loader:
 
     def get_data_size(self):
         """Returns the number of bytes needed to store the full dataset"""
-        size_per_patch = (
+        size_per_sample = (
             4
             * (np.product(self.predictor_shape) + np.product(self.target_shape))
         )
-        return size_per_patch * self.num_patches
+        return size_per_sample * self.num_samples
 
     def debug(self, *args):
         if self.show_debug:
@@ -803,3 +838,10 @@ class Loader:
         # self.debug("Convert", time.time() - s_time)
         return p, t
 
+    def print(self, message):
+        curr_time = time.time() - self.start_time
+        print(f"{curr_time:.2f}: {message}")
+
+    @property
+    def size_gb(self):
+        return self.get_data_size() / 1024**3

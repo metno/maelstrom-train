@@ -1,5 +1,6 @@
 import sys
 import time
+import collections
 
 import numpy as np
 import tensorflow as tf
@@ -51,95 +52,120 @@ class Trainer:
         self.validation_frequency = validation_frequency
 
     def fit(self, data, epochs, validation_data=None, callbacks=[], steps_per_epoch=1):
+        """Custom training loop
+
+        Note that this function assumes that data contains enough data to finish all the epochs.
+        That is, it should have epochs * steps_per_epoch batches. This means you will potentially
+        have to repeat the dataset before passing it in.
+
+        Args:
+            data (tf.data): Dataset used for training
+            epochs (int): Number of epochs to run for
+            validation_data(tf.data): Optional validation dataset
+            callbacks (list): Keras callbacks to call
+            steps_per_epoch (int): Number of batches to process from data until one epoch is
+                finished
+        """
+        # Assume that we run data to exhaustion and count epochs ourselves
         logs = {}
         callback_list = tf.keras.callbacks.CallbackList(
             callbacks, add_history=True, model=self.model
         )
 
         callback_list.on_train_begin(logs=logs)
-        num_batches = None
 
-        for epoch in range(epochs):
+        num_batches = steps_per_epoch * epochs
+
+        s_time = time.time()
+        epoch_loss_avg = tf.keras.metrics.Mean()
+
+        timing = collections.defaultdict(lambda: 0)
+
+        e_time = time.time()
+        for batch, (x, y) in enumerate(data):
             s_time = time.time()
-            print(f"Epoch {epoch+1}/{epochs}")
-            epoch_loss_avg = tf.keras.metrics.Mean()
+            read_time = s_time - e_time 
+            epoch = batch // steps_per_epoch
+            steps_since_last_epoch = batch % steps_per_epoch
+            if steps_since_last_epoch == 0:
+                # Starting a new epoch
+                print(f"Epoch {epoch+1}/{epochs}")
+                progbar = tf.keras.utils.Progbar(
+                    steps_per_epoch
+                )  # , stateful_metrics=['val_loss'])
+                callback_list.on_epoch_begin(epoch, logs=logs)
 
-            callback_list.on_epoch_begin(epoch, logs=logs)
+            callback_list.on_train_batch_begin(batch, logs=logs)
 
-            progbar = tf.keras.utils.Progbar(
-                num_batches
-            )  # , stateful_metrics=['val_loss'])
+            """Training step"""
+            ss_time = time.time()
+            loss_value, forward_time, backward_time = self.train_step(x, y)
+            # forward_time = time.time() - ss_time
+
+            # Moving window batch loss
+            ss_time = time.time()
+            epoch_loss_avg.update_state(loss_value)  # Add current batch loss
+            logs["loss"] = epoch_loss_avg.result()
+            # backward_time = time.time() - ss_time
+
+            # Instantaneous batch loss
+            # logs["loss"] = loss_value
+
+            callback_list.on_train_batch_end(batch, logs=logs)
+            values = [(k, v) for k, v in logs.items()]
+
+            prev_e_time = e_time
             e_time = time.time()
-            for batch, (x, y) in enumerate(data):
-                s_time = time.time()
-                read_time = s_time - e_time 
-                # print(epoch, batch)
-                # self.callbacks.on_batch_begin(batch, logs=logs)
-                callback_list.on_train_batch_begin(batch, logs=logs)
-
-                ss_time = time.time()
-                loss_value = self.train_step(x, y)
-                forward_time = time.time() - ss_time
-
-                # Moving window batch loss
-                ss_time = time.time()
-                epoch_loss_avg.update_state(loss_value)  # Add current batch loss
-                logs["loss"] = epoch_loss_avg.result()
-                backward_time = time.time() - ss_time
-
-                # Instantaneous batch loss
-                # logs["loss"] = loss_value
-
-                callback_list.on_train_batch_end(batch, logs=logs)
-                # self.callbacks.on_batch_end(batch, logs=logs)
-                values = [(k, v) for k, v in logs.items()]
-
-                # Is this the last time the progress bar updates?
-                finalize = False
-                if validation_data is None:
-                    # print("VALIDATION DATA", validation_data is None, num_batches, batch)
-                    if num_batches is not None and batch == num_batches - 1:
-                        finalize = True
-
-                progbar.update(
-                    batch + 1, values, finalize
-                )  # This will update the progress bar graph.
-                prev_e_time = e_time
-                e_time = time.time()
-                print(batch, read_time, forward_time, backward_time, e_time - prev_e_time, e_time - s_time)
+            batch_time = e_time - prev_e_time
+            timing["read_time"] += read_time
+            timing["forward_time"] += forward_time
+            timing["backward_time"] += backward_time
+            timing["count"] += 1
+            timing["batch_time"] += batch_time
+            timing["other_time"] += batch_time - read_time - forward_time - backward_time
             train_logs = logs
             num_batches = batch + 1
 
             val_logs = dict()
-            if validation_data is not None:
-                logs = None
-                count = 0
-                for batch, (x, y) in enumerate(validation_data):
-                    # self.callbacks.on_batch_begin(batch, logs=logs)
-                    callback_list.on_test_batch_begin(batch, logs=logs)
+            if steps_since_last_epoch == steps_per_epoch - 1:
+                # This is the end of the epoch
+                if validation_data is not None:
+                    """Validation"""
+                    logs = None
+                    count = 0
+                    for batch, (x, y) in enumerate(validation_data):
+                        callback_list.on_test_batch_begin(batch, logs=logs)
 
-                    # logs = self.test_step(x, y)
-                    curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
-                    if logs is None:
-                        logs = curr_logs
-                    else:
-                        for k, v in curr_logs.items():
-                            logs[k] += v
-                    count += 1
+                        # logs = self.test_step(x, y)
+                        curr_logs = self.model.test_on_batch(x=x, y=y, return_dict=True)
+                        if logs is None:
+                            logs = curr_logs
+                        else:
+                            for k, v in curr_logs.items():
+                                logs[k] += v
+                        count += 1
 
-                    callback_list.on_test_batch_end(batch, logs=logs)
-                    # self.callbacks.on_batch_end(batch, logs=logs)
-                for k, v in logs.items():
-                    val_logs["val_%s" % k] = v / count
-                values = [(k, v) for k, v in val_logs.items()]
-                progbar.update(
-                    num_batches + 1, values, True
-                )  # This will update the progress bar graph.
-                # progbar.add(0, values) # This will update the progress bar graph.
+                        callback_list.on_test_batch_end(batch, logs=logs)
+                    for k, v in logs.items():
+                        val_logs["val_%s" % k] = v / count
+                    values = [(k, v) for k, v in val_logs.items()]
+                    # progbar.update(
+                    #     num_batches + 1, values, True
+                    # )  # This will update the progress bar graph.
+                    # # progbar.add(0, values) # This will update the progress bar graph.
+                else:
+                    progbar.update(steps_since_last_epoch, values, True)
 
-            e_time = time.time()
-            # print(e_time - s_time, (e_time - s_time) / (batch + 1))
-            callback_list.on_epoch_end(epoch, val_logs)
+                e_time = time.time()
+                callback_list.on_epoch_end(epoch, val_logs)
+                print(f"Epoch {epoch} statistics:")
+                for k,v in timing.items():
+                    if k != "count":
+                        val = v / timing["count"] * 1000
+                        print(f"   {k}: {val:.2f} ms")
+            else:
+                progbar.update(steps_since_last_epoch, values, False)
+
         callback_list.on_train_end()
 
     def predict(self, dataset, **kwargs):
@@ -153,7 +179,11 @@ class Trainer:
 
     @tf.function
     def train_step(self, x, y):
+        forward_time = 0
+        backward_time = 0
         for i in range(self.steps):
+            """Forward pass"""
+            s_time = time.time()
             with tf.GradientTape(persistent=True) as tape:
                 logits = self.model(x, training=True)
                 if self.grad_type == "mean":
@@ -165,9 +195,13 @@ class Trainer:
                     # loss_value = self.loss(y[:, -1, ...], logits[:, -1, ...])
                 else:
                     loss_value = [self.loss(y, logits)]
+            e_time = time.time()
+            forward_time += e_time - s_time
+
             # print("logits", logits.shape)
             # print(loss_value)
             # print("watched variables", tape.watched_variables())
+            s_time = time.time()
             if self.grad_type == "mean":
                 grads = tape.gradient(loss_value, self.model.trainable_weights)
             else:
@@ -204,10 +238,11 @@ class Trainer:
             # print("trainable_weights", self.model.trainable_weights)
             # print("grads", grads)
             self.optimizer.apply_gradients(zip(grads, self.model.trainable_weights))
+            backward_time += time.time() - s_time
 
         # print("ABS", abs)
 
-        return tf.math.reduce_mean(loss_value)
+        return tf.math.reduce_mean(loss_value), forward_time, backward_time
 
     @tf.function
     def test_step(self, x, y):
