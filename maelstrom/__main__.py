@@ -229,9 +229,8 @@ def main():
     if do_validation:
         kwargs["validation_data"] = dataset_val
         keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
-    else:
-        kwargs = {}
     # kwargs["verbose"] = main_process
+    print("keras_epochs:", keras_epochs)
 
     if main_process:
         logger.add("Timing", "Training", "Start_time", int(time.time()))
@@ -255,7 +254,7 @@ def main():
         maelstrom.util.print_memory_usage()
         history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
                 **kwargs)
-        print(f"Training time: {time.time() - ss_time}")
+        print(f"Training time: {time.time() - start_time}")
         # TODO: Enable this
         # if main_process:
         #     model.load_weights(checkpoint_filepath)
