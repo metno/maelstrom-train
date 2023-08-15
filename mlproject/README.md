@@ -1,11 +1,11 @@
 In juwelsbooster
 1. Set python to version 3.9. For this load the following modules:
 ```
-module --force purge
-module load Stages/2022
-module load GCCcore/.11.2.0
-module load NCCL/2.11.4-CUDA-11.5
-module load Python/3.9.6
+ml --force purge
+ml use $OTHERSTAGES
+ml Stages/2022
+ml GCCcore/.11.2.0
+ml Python/3.9.6
 ```
 
 2. Create a virtual enviroment and activate it:
