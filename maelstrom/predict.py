@@ -89,7 +89,7 @@ def main():
     if loader.predict_diff:
         for q in range(results.shape[-1]):
             results[..., q] += raw_predictor
-        obs += raw_predictor
+        obs += raw_predictor[:, 0, ...]
 
     # Save results to file
     # TODO: Create a gridded file output
