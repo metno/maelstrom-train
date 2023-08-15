@@ -41,7 +41,7 @@ def quantile_score(y_true, y_pred, quantile_levels, trim=None):
     for i, quantile in enumerate(quantile_levels):
         err = y_true[..., 0] - y_pred[..., i]
         if trim is not None:
-            err = err[:, :, trim:-trim, trim:-trim]
+            err = err[..., trim:-trim, trim:-trim]
         qtloss += (quantile - tf.cast((err < 0), tf.float32)) * err
     return K.mean(qtloss) / len(quantile_levels)
 
@@ -61,16 +61,16 @@ def quantile_score_prob(y_true, y_pred, quantile_levels, trim=None):
     qtloss = 0
     for i, quantile in enumerate(quantile_levels):
         if weighted:
-            err = y_true_mean - y_pred[:, :, :, i]
+            err = y_true_mean - y_pred[..., i]
             curr = (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
             qtloss += curr / (1 + y_true_std)
         else:
             s = 0.6 * (K.log(quantile)*2 - K.log((1-quantile)*2))
-            err = y_true_mean + s - y_pred[:, :, :, i]
+            err = y_true_mean + s - y_pred[..., i]
             qtloss += (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
 
     if trim is not None:
-        qtloss = qtloss[:, :, trim:-trim, trim:-trim]
+        qtloss = qtloss[..., trim:-trim, trim:-trim]
     return K.mean(qtloss / len(quantile_levels))
 
 
