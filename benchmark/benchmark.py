@@ -608,13 +608,13 @@ class Ap1Loader:
             for name in self.extra_predictor_names:
                 feature = np.zeros(shape, np.float32)
                 if name == "leadtime":
-                    val = tf.range(shape[0])[:, None, None, None]
+                    val = tf.range(shape[0], dtype=tf.float32)[:, None, None, None]
                     feature = tf.tile(val, [1, shape[1], shape[2], shape[3]])
                 elif name == "x":
-                    val = tf.range(shape[2])[None, None, :, None]
+                    val = tf.range(shape[2], dtype=tf.float32)[None, None, :, None]
                     feature = tf.tile(val, [shape[0], shape[1], 1, shape[3]])
                 elif name == "y":
-                    val = tf.range(shape[1])[None, None, :, None]
+                    val = tf.range(shape[1], dtype=tf.float32)[None, :, None, None]
                     feature = tf.tile(val, [shape[0], 1, shape[2], shape[3]])
                 else:
                     raise ValueError(f"Unknown feature {name}")
