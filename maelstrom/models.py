@@ -451,7 +451,8 @@ class Unet(Model):
         levels=3,
         pool_size=2,
         conv_size=3,
-        upsampling_type="conv_transpose",
+        upsampling_type="upsampling",
+        separable=False,
         with_leadtime=False,
     ):
         """U-net
@@ -473,6 +474,7 @@ class Unet(Model):
         self._conv_size = conv_size
         self._with_leadtime = with_leadtime
         self._upsampling_type = upsampling_type
+        self._separable = separable
 
         new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
 
@@ -484,19 +486,19 @@ class Unet(Model):
 
         features = self._features
 
-        pool_size = [1, self._pool_size, self._pool_size]
-        hood_size = [1, self._conv_size, self._conv_size]
-
-        Conv = keras.layers.Conv3D
-        if self._upsampling_type == "upsampling":
-            UpConv = keras.layers.UpSampling3D
-        elif self._upsampling_type == "conv_transpose":
-            UpConv = keras.layers.Conv3DTranspose
-
-        # Conv = maelstrom.layers.TimeDistributedConv2D
-        # hood_size = [self._conv_size, self._conv_size]
-        # Conv = maelstrom.layers.SeparableConv2D
-        # hood_size = [self._conv_size, self._conv_size]
+        if self._separable:
+            Conv = maelstrom.layers.DepthwiseConv2D
+            Conv = maelstrom.layers.SeparableConv2D
+            pool_size = [1, self._pool_size, self._pool_size]
+            hood_size = [self._conv_size, self._conv_size]
+            up_pool_size = [self._pool_size, self._pool_size]
+            up_hood_size = [1, self._conv_size, self._conv_size]
+        else:
+            Conv = keras.layers.Conv3D
+            pool_size = [1, self._pool_size, self._pool_size]
+            hood_size = [1, self._conv_size, self._conv_size]
+            up_pool_size = pool_size
+            up_hood_size = hood_size
 
         # Downsampling
         # conv -> conv -> max_pool
@@ -524,7 +526,19 @@ class Unet(Model):
         # upconv -> concat -> conv -> conv
         for i in range(self._levels - 2, -1, -1):
             features /= 2
-            outputs = UpConv(features, hood_size, strides=pool_size, padding="same")(outputs)
+            # Upsampling
+            if self._upsampling_type == "upsampling":
+                # The original paper used this kind of upsampling
+                UpConv = keras.layers.UpSampling3D
+                outputs = Conv(features, up_pool_size, activation="relu", padding="same")(
+                    outputs
+                )
+                outputs = UpConv(pool_size)(outputs)
+            elif self._upsampling_type == "conv_transpose":
+                # Some use this kind of upsampling. This seems to create a checkered pattern in the
+                # output, at least for me.
+                UpConv = keras.layers.Conv3DTranspose
+                outputs = UpConv(features, up_hood_size, strides=pool_size, padding="same")(outputs)
 
             outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
             outputs = Conv(features, hood_size, activation="relu", padding="same")(

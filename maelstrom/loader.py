@@ -4,13 +4,13 @@ import json
 import math
 import netCDF4
 import numpy as np
+import os
 import tensorflow as tf
 import time
 import xarray as xr
 import yaml
 
 import maelstrom
-from decorator import *
 
 class Loader:
     """Data loader class
@@ -30,13 +30,12 @@ class Loader:
         patch_size=None,
         predict_diff=False,
         batch_size=1,
-        prefetch=None,
         cache=False,
         num_parallel_calls=None,
         extra_features=[],
         quick_metadata=True,
         debug=False,
-        fake=False,
+        create_fake_data=False,
         to_gpu=True,
         with_leadtime=True,
     ):
@@ -53,55 +52,59 @@ class Loader:
             patch_size (int): Patch the data with a stencil of this width (pixels)
             predict_diff (bool): Change the prediction problem to estimate the forecast bias
             batch_size (int): Number of samples to use per batch
-            prefetch (int): Number of batches to prefetch
             cache (bool): Cache data in memory (before moving to GPU)
             num_parallel_calls (int): Number of threads to use for each pipeline stage
             extra_features (dict): Configuration of extra features to generate
             quick_metadata (bool): Deduce date metadata from filename, instead of reading the file
             debug (bool): Turn on debugging information
-            fake (bool): Generate fake data, instead of reading from file
+            create_fake_data (bool): Generate fake data, instead of reading from file
             to_gpu (bool): Move final tensors to GPU in the data processing pipeline
-            with_leadtime (bool): Generate data with the whole leadtime dimension
+            with_leadtime (bool): Include leadtime dimension in one sample
         """
-        self.show_debug = debug
+        self.debug = debug
         self.filenames = list()
         self.extra_features = extra_features
         for f in filenames:
             self.filenames += glob.glob(f)
-        print(self.filenames)
         self.limit_predictors = limit_predictors
         self.limit_leadtimes = limit_leadtimes
         self.x_range = x_range
         self.y_range = y_range
+        self.with_leadtime = with_leadtime
         self.patch_size = patch_size
         self.predict_diff = predict_diff
         self.batch_size = batch_size
-        self.prefetch = prefetch
         self.cache = cache
-        self.load_metadata(self.filenames[0])
-        self.timing = maelstrom.timer.Timer("test.txt")
-        self.normalization = normalization
-        self.fake = fake
+        self.filename_normalization = normalization
+        self.create_fake_data = create_fake_data
         self.num_parallel_calls = num_parallel_calls
+        self.probabilistic_target = probabilistic_target
 
-        self.load_coefficients()
-
+        self.logger = maelstrom.timer.Timer("test.txt")
+        self.timing = collections.defaultdict(lambda: 0)
         self.count_reads = 0
         self.count_start_processing = 0
         self.count_done_processing = 0
-
-        self.dataset = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time")
-        limit = self.get_dimension_limits(self.dataset)
-        self.dataset = self.dataset.isel(**limit)
-
         # Initialize a timer so that we can track overall processing time
-        self.device = "CPU:0"
         self.start_time = time.time()
-        self.with_leadtime = with_leadtime
+
+        # Where should data reside during the processing steps? Processing seems faster on CPU,
+        # perhaps because the pipeline stages can run in parallel better than on the GPU?
+        self.device = "CPU:0"
+
+        # Set up dataset
+        # cache=False seems to have no effect
+        self.data = xr.open_mfdataset(self.filenames, decode_timedelta=False, decode_times=False, combine="nested", concat_dim="time") # , cache=False)
+        limits = self.get_dimension_limits(self.data)
+        self.data = self.data.isel(**limits)
+
+        self.load_metadata(self.data)
 
         # Cache the normalization coefficients
         self.normalize_add = None
         self.normalize_factor = None
+        self.coefficients = self.read_normalization()
+
 
     @staticmethod
     def from_config(config):
@@ -144,85 +147,88 @@ class Loader:
             end = (shard_index + 1) * math.ceil(self.num_files // shard_size)
             print("SHARD", shard_index, start, end)
             dataset = tf.data.Dataset.range(start, end)
-        if randomize_order:
-            dataset = dataset.shuffle(10000)
 
+        if randomize_order:
+            dataset = dataset.shuffle(len(self.filenames))
         if repeat is not None:
             dataset = dataset.repeat(repeat)
 
-        # Read the data from file
+        # Read data from NETCDF files
+        # Outputs three tensors:
+        #     predictors: 59, 2321, 1796, 8
+        #     static_predictor: 2321, 1796, 6
+        #     targets: 59, 2321, 1796, 1
+        # Set number of parallel calls to 1, so that the pipeline doesn't get too far ahead on the
+        # reading, causing the memory requirement to be large. The reading is not the bottleneck so
+        # we don't need to read multiple files in parallel.
         dataset = dataset.map(self.read, num_parallel_calls=1)
-        dataset = dataset.map(self.expand_static_predictors, num_parallel_calls=1)
-
-        # Rebatch the leadtime
-        dataset = dataset.unbatch()
-        if self.with_leadtime:
-            # if num_parallel_calls != tf.data.AUTOTUNE:
-            #     dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
-            dataset = dataset.batch(1)
-        else:
-            dataset = dataset.batch(1)
-        # Shape: (leadtime, y, x, predictor)
-
-        dataset = dataset.map(self.print_start_processing)
-
-        # Split leadtime into samples
-        # if num_parallel_calls != tf.data.AUTOTUNE:
-        #     dataset = dataset.unbatch()
-        #     dataset = dataset.batch(math.ceil(self.num_leadtimes / num_parallel_calls))
-        #     # Shape: (leadtime, y, x, predictor)
-
-        # Perform various processing steps
-        if 0:
-            dataset = dataset.map(self.process, num_parallel_calls=num_parallel_calls)
-        else:
-            # Same steps but split into smaller steps
-            dataset = dataset.map(self.extract_features, num_parallel_calls=num_parallel_calls)
-            # Shape: (leadtime, y, x, predictor)
-            dataset = dataset.map(self.patch, num_parallel_calls=num_parallel_calls)
-            # Shape: (leadtime, patch, y_patch, x_patch, predictor)
-            dataset = dataset.map(self.diff, num_parallel_calls=num_parallel_calls)
-            # Shape: (leadtime, patch, y_patch, x_patch, predictor)
-            dataset = dataset.map(self.normalize, num_parallel_calls=num_parallel_calls)
-        # Shape: (leadtime, patch, y_patch, x_patch, predictor)
-
-        # Collect leadtimes
-        if self.with_leadtime:
-            dataset = dataset.unbatch()
-            dataset = dataset.batch(self.num_leadtimes)
-            # Shape: (leadtime, patch, y_patch, x_patch, predictor)
-
-            # Move patch into sample dimension
-            dataset = dataset.map(self.reorder, num_parallel_calls=num_parallel_calls)
-            # dataset = dataset.map(self.print_done_processing)
-            # Shape: (patch, leadtime, y_patch, x_patch, predictor)
-
-            # Split patches into samples
-            dataset = dataset.unbatch()
-        else:
-            dataset = dataset.unbatch()
-            dataset = dataset.unbatch()
-            dataset = dataset.batch(1)
-        # Shape: (leadtime, y_patch, x_patch, predictor)
-
-        # Cache tensors on the CPU (we don't want caching on GPU)
-
-        # Add sample dimension
-        dataset = dataset.batch(self.batch_size)
-        # Shape: (batch_size, leadtime, y_patch, x_patch, predictor)
-
-        # Move tensor to GPU. We do this at the end to save GPU memory
-        if self.to_gpu:
-            dataset = dataset.map(self.to_gpu, num_parallel_calls=num_parallel_calls)
-
-        if self.prefetch is not None:
-            dataset = dataset.prefetch(self.prefetch)
-
         dataset = dataset.prefetch(1)
 
-        # dataset = dataset.cache()
-        if self.cache:
-            dataset = dataset.cache()
+        # Broadcast static_predictors to leadtime dimension
+        # Set parallel_calls to 1 here as well, to prevent the pipeline from getting too far ahead
+        dataset = dataset.map(self.expand_static_predictors, num_parallel_calls=1)
+
+        # Unbatch the leadtime dimension, so that each leadtime can be processed in parallel
+        dataset = dataset.unbatch()
+        dataset = dataset.batch(1)
+
+        # Processing steps
+        if 1:
+            # Merge static_predictors into predictors and add a few more predictors
+            dataset = dataset.map(self.feature_extraction, num_parallel_calls)
+            # Predictor shape: 1, 2321, 1796, 16
+
+            # Normalize the predictors
+            dataset = dataset.map(self.normalize, num_parallel_calls)
+            # Predictor shape: 1, 2321, 1796, 16
+
+            # Split the y,x dimensions into patches of size 256x256
+            dataset = dataset.map(self.patch, num_parallel_calls)
+            # Predictor shape: 1, 63, 256, 256, 16
+
+            # Sutract the raw forecast from the targets
+            dataset = dataset.map(self.diff, num_parallel_calls)
+            # Predictor shape: 1, 63, 256, 256, 16
+        else:
+            # Perform the 4 above steps in one function
+            dataset = dataset.map(self.process, num_parallel_calls)
+            # Predictor shape: 1, 63, 256, 256, 16
+
+        if self.with_leadtime:
+            # Collect all leadtimes into one tensor again
+            dataset = dataset.unbatch()
+            # Predictor shape: 63, 256, 256, 16
+            dataset = dataset.batch(self.num_leadtimes)
+            # Predictor shape: 59, 63, 256, 256, 16
+
+            # Put patch dimension before leadtime
+            dataset = dataset.map(self.reorder, num_parallel_calls)
+            # Predictor shape: 63, 59, 256, 256, 16
+
+            # Unbatch the patch dimension
+            dataset = dataset.unbatch()
+            # Predictor shape: 59, 256, 256, 14
+        else:
+            # Unbatch the leadtime dimension
+            dataset = dataset.unbatch()
+            # Predictor shape: 63, 256, 256, 14
+
+            # Unbatch the patch dimension
+            dataset = dataset.unbatch()
+            # Predictor shape: 256, 256, 14
+
+            # Batch so that the dataset has 4 dimensions
+            dataset = dataset.batch(1)
+            # Predictor shape: 1, 256, 256, 14
+
+        dataset = dataset.batch(self.batch_size)
+
+        # if self.filename_cache is not None:
+        #     dataset = dataset.cache(self.filename_cache)
+
+        # Copy data to the GPU
+        dataset = dataset.map(self.to_gpu, num_parallel_calls)
+        dataset = dataset.prefetch(1)
 
         self.start_time = time.time()
         return dataset
@@ -233,38 +239,51 @@ class Loader:
     """
     @property
     def predictor_shape(self):
-        """The shape of a predictor for one sample"""
-        if self.with_leadtime:
-            return [
-                self.num_leadtimes,
-                self.num_y,
-                self.num_x,
-                self.num_predictors,
-            ]
-        else:
-            return [
-                1,
-                self.num_y,
-                self.num_x,
-                self.num_predictors,
-            ]
+        return [
+            self.num_leadtimes,
+            self.num_y,
+            self.num_x,
+            self.num_predictors,
+        ]
 
     @property
     def target_shape(self):
-        if self.with_leadtime:
-            return [
-                self.num_leadtimes,
-                self.num_y,
-                self.num_x,
-                self.num_targets,
-            ]
-        else:
-            return [
-                1,
-                self.num_y,
-                self.num_x,
-                self.num_targets,
-            ]
+        return [
+            self.num_leadtimes,
+            self.num_y,
+            self.num_x,
+            self.num_targets,
+        ]
+
+    @property
+    def batch_predictor_shape(self):
+        shape = [self.batch_size] + [i for i in self.predictor_shape]
+        if not self.with_leadtime:
+            shape[1] = 1
+        if self.patch_size is not None:
+            shape[2] = self.patch_size
+            shape[3] = self.patch_size
+        return shape
+
+    @property
+    def sample_predictor_shape(self):
+        """Size of one sample predictor"""
+        return self.batch_predictor_shape[1:]
+
+    @property
+    def batch_target_shape(self):
+        shape = [self.batch_size] + [i for i in self.target_shape]
+        if not self.with_leadtime:
+            shape[1] = 1
+        if self.patch_size is not None:
+            shape[2] = self.patch_size
+            shape[3] = self.patch_size
+        return shape
+
+    @property
+    def sample_target_shape(self):
+        """Size of one sample target"""
+        return self.batch_target_shape[1:]
 
     @property
     def num_files(self):
@@ -277,6 +296,26 @@ class Loader:
         return self.num_x_patches * self.num_y_patches
 
     @property
+    def num_batches(self):
+        return int(np.ceil(self.num_samples_per_file * self.num_files / self.batch_size))
+
+    @property
+    def num_batches_per_file(self):
+        return int(np.ceil(self.num_samples_per_file / self.batch_size))
+
+    @property
+    def num_samples(self):
+        return self.num_samples_per_file * self.num_files
+
+    @property
+    def num_samples_per_file(self):
+        """Returns the number of samples in each NetCDF file"""
+        if self.with_leadtime:
+            return self.num_patches_per_file
+        else:
+            return self.num_patches_per_file * self.num_leadtimes
+
+    @property
     def num_patches(self):
         """Returns the total number of patches in the dataset"""
         return self.num_patches_per_file * self.num_files
@@ -285,35 +324,6 @@ class Loader:
     def num_leadtimes(self):
         """Returns the number of leadtimes in the dataset"""
         return len(self.leadtimes)
-
-    @property
-    def num_samples_per_file(self):
-        if self.with_leadtime:
-            return self.num_patches_per_file
-        else:
-            return self.num_patches_per_file * self.num_leadtimes
-
-    @property
-    def num_samples(self):
-        return self.num_samples_per_file * self.num_files
-
-    @property
-    def num_batches(self):
-        return math.ceil(self.num_samples / self.batch_size)
-
-    @property
-    def num_batches_per_file(self):
-        return math.ceil(self.num_samples_per_file / self.batch_size)
-
-    @property
-    def batch_predictor_shape(self):
-        shape = [self.batch_size] + [i for i in self.predictor_shape]
-        if not self.with_leadtime:
-            shape[1] = 1
-        shape[2] = self.patch_size
-        shape[3] = self.patch_size
-        shape[-1] = self.predictor_shape[-1] + self.static_predictor_shape[-1] + self.num_extra_features
-        return shape
 
     @property
     def num_x(self):
@@ -343,79 +353,82 @@ class Loader:
             return self.num_x_input // self.patch_size
         return 1
 
+    @property
+    def raw_predictor_index(self):
+        """Returns the predictor index corresponding to the raw forecast"""
+        raw_predictor_index = self.predictor_names.index("air_temperature_2m")
+        return raw_predictor_index
+
     """
     Functions used by the data processing pipeline
     """
-    @map_decorator1_to_3
+    @maelstrom.map_decorator1_to_3
     def read(self, index):
         """Read data from NetCDF
 
         Args:
-            index (int): Read data from this time index
+            index (int): Read data from this index
+            leadtimes (list): Only read these leadtimes. If None, read all
 
         Returns:
-            tf.Tensor: 4D array of predictors
-            tf.Tensor: 4D array of static_predictors
-            tf.Tensor: 4D array of observations
+            predictors (tf.tensor): Predictors tensor (leadtime, y, x, predictor)
+            static_predictors (tf.tensor): Satic predictor tensor (y, x, static_predictor)
+            targets (tf.tensor): Targets tensor (leadtime, y, x, 1)
         """
         s_time = time.time()
         index = index.numpy()
-        # self.print(f"Start reading index={index}")
+        self.print(f"Start reading index={index}")
+
         with tf.device(self.device):
-            predictors = self.dataset["predictors"][index, ...].values
-            static_predictors = self.dataset["static_predictors"][index, ...].values
-            targets = self.dataset["target_mean"][index, ...].values
-            targets = tf.expand_dims(targets, -1)
+            if not self.create_fake_data:
+                predictors = self.data["predictors"][index, ...]
+                static_predictors = self.data["static_predictors"][index, ...]
 
-            # Force explicit conversion here, so that we can account the time it takes
-            # Otherwise the conversion happens when the function returns
-            predictors = tf.convert_to_tensor(predictors)
-            static_predictors = tf.convert_to_tensor(static_predictors)
-            targets = tf.convert_to_tensor(targets)
+                if self.probabilistic_target:
+                    mean = np.expand_dims(self.data["target_mean"][index, ...], -1)
+                    std = np.expand_dims(self.data["target_std"][index, ...], -1)
+                    targets = np.concatenate((mean, std), -1)
+                else:
+                    targets = self.data["target_mean"][index, ...]
+                    targets = np.expand_dims(targets, -1)
 
+                # Force explicit conversion here, so that we can account the time it takes
+                # Otherwise the conversion happens when the function returns
+                predictors = tf.convert_to_tensor(predictors)
+                static_predictors = tf.convert_to_tensor(static_predictors)
+                targets = tf.convert_to_tensor(targets)
+            else:
+                predictors = tf.random.uniform(self.predictor_shape)
+                targets = tf.expand_dims(tf.random.uniform(self.target_shape), 3)
+                static_predictors = tf.random.uniform(self.static_predictor_shape)
         e_time = time.time()
-        self.timing.add("read", time.time() - s_time)
+        self.timing["read"] += e_time - s_time
+        # print(predictors.shape, static_predictors.shape, targets.shape)
         return predictors, static_predictors, targets
 
-    @map_decorator3_to_3
+    @maelstrom.map_decorator3_to_3
     def expand_static_predictors(self, predictors, static_predictors, targets):
         """Copies static predictors to leadtime dimension"""
         s_time = time.time()
-        # self.print("Start processing")
-        # print(predictors.shape, static_predictors.shape, targets.shape)
+        self.print("Start processing")
         with tf.device(self.device):
             shape = [predictors.shape[0], 1, 1, 1]
             static_predictors = tf.expand_dims(static_predictors, 0)
             static_predictors = tf.tile(static_predictors, shape)
-        self.timing.add("expand", time.time() - s_time)
+        self.timing["expand"] += time.time() - s_time
         return predictors, static_predictors, targets
 
-
-    @map_decorator3_to_2
-    def process(self, predictors, static_predictors, targets):
-        """Perform all processing steps in one function.
-
-        This is an alterative to calling each function separately.
-        """
-        s_time = time.time()
-        p, t = self.extract_features(predictors, static_predictors, targets)
-        p, t = self.patch(p, t)
-        p, t = self.diff(p, t)
-        p, t = self.normalize(p, t)
-        # print("End process", time.time() - s_time)
-        return p, t
-
-    @map_decorator3_to_2
-    def extract_features(self, predictors, static_predictors, targets):
-        """Extract features and append to predictors
+    @maelstrom.map_decorator3_to_2
+    def feature_extraction(self, predictors, static_predictors, targets):
+        """Extract features and append to predictors and merge in static predictors
 
         Input: leadtime, y, x, predictor
         Output: leadtime, y, x, predictor
         """
         s_time = time.time()
-        with tf.device("CPU:0"):
-            p = [predictors, static_predictors]
-            shape = predictors.shape
+        features = [predictors, static_predictors]
+        with tf.device(self.device):
+            shape = list(predictors.shape[:-1]) + [1]
             for f, feature in enumerate(self.extra_features):
                 feature_type = feature["type"]
                 if feature_type == "x":
@@ -427,15 +440,72 @@ class Loader:
                 elif feature_type == "leadtime":
                     x = tf.range(shape[0], dtype=tf.float32)
                     curr = self.broadcast(x, shape, 0)
-                curr = tf.convert_to_tensor(curr)
                 curr = tf.expand_dims(curr, -1)
-                p += [curr]
+                features += [curr]
 
-            p = tf.concat(p, axis=3)
-        self.timing.add("extract", time.time() - s_time)
-        return p, targets
+            predictors = tf.concat(features, axis=3)
+        self.logger.add("extract", time.time() - s_time)
+        return predictors, targets
 
-    @map_decorator2_to_2
+    @maelstrom.map_decorator2_to_2
+    def normalize(self, predictors, targets):
+        """Normalize predictors
+
+        Input: leadtime, patch, y, x, predictor
+        Output: leadtime, patch, y, x, predictor
+        """
+        s_time = time.time()
+        if self.coefficients is None:
+            self.logger.add("normalize", time.time() - s_time)
+            return predictors, targets
+
+        self.print("Normalize", predictors.shape, self.coefficients.shape)
+
+        with tf.device(self.device):
+            # Check for the existance of both vectors, since when this runs in parallel, the
+            # first vector may be available before the other
+            if self.normalize_add is None or self.normalize_factor is None:
+                a = self.coefficients[:, 0]
+                s = self.coefficients[:, 1]
+                shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
+
+                def expand_array(a, shape):
+                    """Expands array a so that it has the shape"""
+                    if len(a.shape) == 5:
+                        # Use if unbatch has not been run
+                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
+                    else:
+                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
+                    a = tf.tile(a, shape)
+                    return a
+
+                self.normalize_add = expand_array(a, shape)
+                self.normalize_factor = expand_array(s, shape)
+
+            predictors = predictors - self.normalize_add
+            predictors = predictors / self.normalize_factor
+
+        self.logger.add("normalize", time.time() - s_time)
+        return predictors, targets
+
+    def read_normalization0(self):
+        coefficients = np.zeros([self.num_predictors, 2], np.float32)
+        coefficients[:, 1] = 1
+        with open(self.filename_normalization) as file:
+            data = yaml.load(file, Loader=yaml.SafeLoader)
+            # Add normalization information for the extra features
+            data["x"] = (1000, 100)
+            data["y"] = (1000, 100)
+            data["leadtime"] = (30, 10)
+
+            for i, name in enumerate(self.predictor_names):
+                if name in data:
+                    coefficients[i, :] = data[name]
+                else:
+                    coefficients[i, :] = [0, 1]
+        return coefficients
+
+    @maelstrom.map_decorator2_to_2
     def patch(self, predictors, targets):
         """Decompose grid into patches
 
@@ -443,13 +513,13 @@ class Loader:
         Output: leadtime, patch, y_patch, x_patch, predictor
         """
         s_time = time.time()
-        self.debug("Start patch", time.time() - self.start_time, predictors.shape)
+        self.print("Start patch", time.time() - self.start_time, predictors.shape)
 
         if self.patch_size is None:
             # A patch dimension is still needed when patching is not done
             with tf.device("CPU:0"):
                 p, t = tf.expand_dims(predictors, 1),  tf.expand_dims(targets, 1)
-            self.debug(p.device)
+            self.print(p.device)
             return p, t
 
         def patch_tensor(a, ps):
@@ -497,11 +567,11 @@ class Loader:
             p = patch_tensor(predictors, self.patch_size)
             t = patch_tensor(targets, self.patch_size)
 
-        self.timing.add("patch", time.time() - s_time)
-        self.debug("Done patching", time.time() - self.start_time, p.shape)
+        self.logger.add("patch", time.time() - s_time)
+        self.print("Done patching", time.time() - self.start_time, p.shape)
         return p, t
 
-    @map_decorator2_to_2
+    @maelstrom.map_decorator2_to_2
     def diff(self, predictors, targets):
         """Subtract the raw forecast from predictors and targets
 
@@ -509,119 +579,79 @@ class Loader:
         Output: leadtime, patch, y, x, predictor
         """
         s_time = time.time()
-        if self.raw_predictor_index is None:
-            return predictors, targets
-        Ip = self.raw_predictor_index
-        v = tf.expand_dims(predictors[..., Ip], -1)
-        t = tf.math.subtract(targets, v)
-        self.timing.add("diff", time.time() - s_time)
-        return predictors, t
-
-    @map_decorator2_to_2
-    def normalize(self, predictors, targets):
-        """Normalize predictors
-
-        Input: leadtime, patch, y, x, predictor
-        Output: leadtime, patch, y, x, predictor
-        """
-        s_time = time.time()
-        if self.coefficients is None:
-            self.timing.add("normalize", time.time() - s_time)
+        if not self.predict_diff:
             return predictors, targets
 
-        self.debug("Normalize", predictors.shape, self.coefficients.shape)
+        """Subtract the raw_forecast from the target"""
+        with tf.device(self.device):
+            raw_predictor = tf.expand_dims(predictors[..., self.raw_predictor_index], -1)
+            targets = tf.math.subtract(targets, raw_predictor)
 
-        with tf.device("CPU:0"):
-            if self.normalize_add is None or self.normalize_factor is None:
-                a = self.coefficients[:, 0]
-                s = self.coefficients[:, 1]
-                shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
+        self.logger.add("diff", time.time() - s_time)
+        return predictors, targets
 
-                def expand_array(a, shape):
-                    """Expands array a so that it has the shape"""
-                    if 1:
-                        # Use if unbatch has not been run
-                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0), 0)
-                    else:
-                        a = tf.expand_dims(tf.expand_dims(tf.expand_dims(a, 0), 0), 0)
-                    a = tf.tile(a, shape)
-                    return a
+    @maelstrom.map_decorator3_to_2
+    def process(self, predictors, static_predictors, targets):
+        """Perform all processing steps in one go"""
+        with tf.device(self.device):
+            p, t = self.feature_extraction(predictors, static_predictors, targets)
+            p, t = self.normalize(p, t)
+            p, t = self.patch(p, t)
+            p, t = self.diff(p, t)
+        return p, t
 
-                self.normalize_add = expand_array(a, shape)
-                self.normalize_factor = expand_array(s, shape)
-
-            p = tf.math.subtract(predictors, self.normalize_add)
-            p = tf.math.divide(p, self.normalize_factor)
-
-        self.timing.add("normalize", time.time() - s_time)
-        return p, targets
-
-    @map_decorator2_to_2
+    @maelstrom.map_decorator2_to_2
     def reorder(self, predictors, targets):
         """Move patch dimension to be the first dimension
 
         Input: leadtime, patch, y, x, predictor
         Output: patch, leadtime, y, x, predictor
         """
-        self.debug("Reorder start", time.time() - self.start_time, predictors.shape)
+        if self.patch_size is None:
+            return predictors, targets
         s_time = time.time()
-        with tf.device("CPU:0"):
+        with tf.device(self.device):
             p = tf.transpose(predictors, [1, 0, 2, 3, 4])
             t = tf.transpose(targets, [1, 0, 2, 3, 4])
-        self.timing.add("reorder", time.time() - s_time)
-        self.debug("Done reordering", time.time() - self.start_time, p.device)
+        self.timing["reorder"] += time.time() - s_time
         return p, t
 
-    @map_decorator2_to_2
-    def to_gpu(self, p, t):
-        """Copy tensors to GPU"""
+    @maelstrom.map_decorator2_to_2
+    def to_gpu(self, predictors, targets):
         s_time = time.time()
-        # p, t = tf.identity(p), tf.identity(t)
-        p = tf.convert_to_tensor(p)
-        t = tf.convert_to_tensor(t)
-        self.debug("Moving ", p.shape, "to device", p.device)
-        self.timing.add("to_gpu", time.time() - s_time)
-        # print("TO GPU", p.shape, t.shape)
-        # print("Moved to gpu", time.time() - self.start_time, time.time() - s_time)
+        p = tf.convert_to_tensor(predictors)
+        t = tf.convert_to_tensor(targets)
+        self.timing["to_gpu"] += time.time() - s_time
         return p, t
 
-    @map_decorator2_to_2
+    def print(self, *args):
+        if self.debug:
+            curr_time = time.time() - self.start_time
+            message = ' '.join(["%s" % s for s in args])
+            print(f"{curr_time:.2f}: {message}")
+
+    @maelstrom.map_decorator2_to_2
     def print_shape(self, p, t):
         """Helper function to print out the shape of tensors"""
         print(p.shape, t.shape)
         return p, t
 
-    @map_decorator3_to_3
-    def print_start_processing(self, p, s, t):
-        # print("%.4f" % (time.time() - self.start_time), "Start processing", self.count_start_processing)
+    @maelstrom.map_decorator2_to_2
+    def print_start_processing(self, p, t):
+        print("%.4f" % (time.time() - self.start_time), "Start processing", self.count_start_processing)
         self.count_start_processing += 1
-        return p, s, t
+        return p, t
 
-    @map_decorator2_to_2
+    @maelstrom.map_decorator2_to_2
     def print_done_processing(self, p, t):
         print("%.4f" % (time.time() - self.start_time), "Done processing", self.count_done_processing)
         self.count_done_processing += 1
         return p, t
 
-    @map_decorator1_to_1
+    @maelstrom.map_decorator1_to_1
     def print_start_time(self, p):
         print("Start", p.numpy(), "%.4f" % (time.time() - self.start_time))
         return p
-
-    @property
-    def raw_predictor_index(self):
-        """Returns the predictor index corresponding to the raw forecast"""
-        raw_predictor_index = None
-        if self.predict_diff:
-            raw_predictor_index = self.predictor_names.index("air_temperature_2m")
-            return raw_predictor_index
-
-    @map_decorator2_to_2
-    def convert(self, p, t):
-        """Convert numpy arrays to tensors"""
-        p, t = tf.convert_to_tensor(p), tf.convert_to_tensor(t)
-        self.debug("Convert", p.device)
-        return p, t
 
     """
     Various helper functions
@@ -663,13 +693,12 @@ class Loader:
             limit["y"] = self.y_range
         return limit
 
-    def load_metadata(self, filename):
+    def load_metadata(self, dataset):
         """Reads matadata from one file and stores relevant information in self"""
-        dataset = xr.open_dataset(filename, decode_timedelta=False)
-        limit = self.get_dimension_limits(dataset)
-        dataset = dataset.isel(**limit)
-
         self.leadtimes = dataset.leadtime.to_numpy()
+        self.times = dataset.time.to_numpy()
+        if not maelstrom.util.is_list(self.times):
+            self.times = np.array([self.times])
         # if self.limit_leadtimes is not None:
         #     self.leadtimes = [dataset.leadtime[i] for i in self.limit_leadtimes]
         self.num_x_input = len(dataset.x)
@@ -679,39 +708,40 @@ class Loader:
                 raise ValueError("Patch size too small")
             if self.patch_size > self.num_y_input:
                 raise ValueError("Patch size too small")
-        self.num_input_predictors = len(dataset.predictor) + len(dataset.static_predictor)
-        self.num_predictors = self.num_input_predictors + len(self.extra_features)
         self.predictor_names_input = [p for p in dataset.predictor.to_numpy()] + [p for p in dataset.static_predictor.to_numpy()]
         self.predictor_names = self.predictor_names_input + [self.get_feature_name(p) for p in self.extra_features]
+
         if self.limit_predictors is not None:
-            self.num_predictors = len(self.limit_predictors)
+            self.num_predictors = len(self.limit_predictors) + len(self.extra_features)
+        else:
+            self.num_predictors = len(dataset.predictor) + len(dataset.static_predictor) + len(self.extra_features)
 
-        self.num_targets = 1
+        self.num_targets = 1 + self.probabilistic_target
 
-        dataset.close()
+        # dataset.close()
 
     def description(self):
         d = dict()
-        d["Predictor shape"] = ", ".join(["%d" % i for i in self.predictor_shape])
-        d["Target shape"] = ", ".join(["%d" % i for i in self.target_shape])
+        def vec_to_str(vec):
+            return ", ".join(["%d" % i for i in vec])
+        d["Predictor size (batch)"] = vec_to_str(self.batch_predictor_shape)
+        d["Predictor size (sample)"] = vec_to_str(self.sample_predictor_shape)
+        d["Target shape (sample)"] = vec_to_str(self.sample_target_shape)
+        d["Total num targets"] = f"{int(np.product(self.sample_target_shape) * self.num_samples):,}"
         d["Num files"] = self.num_files
         d["Num leadtimes"] = self.num_leadtimes
-
-        if self.patch_size is None:
-            d["Num samples"] = self.num_files * self.num_patches_per_file
-        else:
-            d["Patches per file"] = self.num_patches_per_file
-            d["Samples per file"] = self.num_samples_per_file
-            d["Num patches"] = self.num_patches
-            d["Num samples"] = self.num_samples
-            d["Patch size"] = self.patch_size
-            d["Num batches"] = self.num_batches
-            d["Batches per file"] = self.num_batches_per_file
-        d["Batch size"] = self.batch_size
         d["Num predictors"] = self.num_predictors
-        d["Num targets"] = self.num_targets
-        d["Batch size (MB)"] = self.get_data_size() / 1024**2 / self.num_samples * self.batch_size
-        d["Total size (GB)"] = self.get_data_size() / 1024**3
+        d["Num targets fields"] = self.num_targets
+        d["Batch size"] = self.batch_size
+
+        if self.patch_size is not None:
+            d["Patch size"] = self.patch_size
+            d["Patches per file"] = self.num_patches_per_file
+
+        d["Total num batches"] = self.num_samples_per_file * self.num_files // self.batch_size
+        d["Total num samples"] = self.num_samples_per_file * self.num_files
+        d["Sample size (MB)"] = self.size_gb() * 1024 / self.num_samples
+        d["Total size (GB)"] = self.size_gb()
 
         d["Predictors"] = list()
         if self.predictor_names is not None:
@@ -723,12 +753,12 @@ class Loader:
         """Returns a string representation of the dataset"""
         return json.dumps(self.description(), indent=4)
 
-    def load_coefficients(self):
-        self.coefficients = None
-        if self.normalization is not None:
-            self.coefficients = np.zeros([self.num_predictors, 2], np.float32)
-            self.coefficients[:, 1] = 1
-            with open(self.normalization) as file:
+    def read_normalization(self):
+        ret = None
+        if self.filename_normalization is not None:
+            ret = np.zeros([self.num_predictors, 2], np.float32)
+            ret[:, 1] = 1
+            with open(self.filename_normalization) as file:
                 coefficients = yaml.load(file, Loader=yaml.SafeLoader)
                 # Add normalization information for the extra features
                 for k,v in self.get_extra_features_normalization(self.extra_features).items():
@@ -736,11 +766,12 @@ class Loader:
 
                 for i, name in enumerate(self.predictor_names):
                     if name in coefficients:
-                        self.coefficients[i, :] = coefficients[name]
+                        ret[i, :] = coefficients[name]
                     elif name in self.extra_features:
-                        sel.coefficients[i, :] = [0, 1]
+                        ret[i, :] = [0, 1]
                     else:
-                        self.coefficients[i, :] = [0, 1]
+                        ret[i, :] = [0, 1]
+        return ret
 
     def get_extra_features_normalization(self, extra_features):
         normalization = dict()
@@ -769,79 +800,28 @@ class Loader:
         else:
             return feature["type"]
 
-    def get_data_size(self):
-        """Returns the number of bytes needed to store the full dataset"""
-        size_per_sample = (
-            4
-            * (np.product(self.predictor_shape) + np.product(self.target_shape))
-        )
-        return size_per_sample * self.num_samples
-
-    def debug(self, *args):
-        if self.show_debug:
-            print(*args)
-
-    def parse_file_netcdf(self, filename, leadtime_indices=None):
-        """ Old way of reading data using NetCDF4 library
-
-        Don't use, only provided for reference.
-
-        Args:
-            filename (str): Read data from this filename
-            leadtimes (list): Only read these leadtimes. If None, read all
-
-        Returns:
-            np.array: 4D array of predictors
-            np.array: 4D array of observations
-        """
-        s_time = time.time()
-        self.debug("Loading", filename)
-        with netCDF4.Dataset(filename) as dataset:
-
-            dims = dataset.dimensions
-            Ip = range(len(dims["predictor"]))
-
-            # Figure out which dimensions should be limited
-            limit = dict()
-            Ip = slice(0, len(dims["predictor"]))
-            Ips = slice(0, len(dims["static_predictor"]))
-            if self.limit_predictors is not None:
-                Ip = [i for i in range(len(dims["predictor"])) if dataset.variables["predictor"][i] in self.limit_predictors]
-                Ips = [i for i in range(len(dims["static_predictor"])) if dataset.variables["static_predictor"][i] in self.limit_predictors]
-
-            It = slice(0, len(dims["leadtime"]))
-            if leadtime_indices is None:
-                if self.limit_leadtimes is not None:
-                    # limit["leadtime"] = [i for i in range(len(dataset.leadtime)) if dataset.leadtime[i] in self.limit_leadtimes]
-                    It = self.limit_leadtimes
-            else:
-                if self.limit_leadtimes is not None:
-                    It = [dataset.variabls["leadtime"][i] for i in leadtime_indices]
-                else:
-                    It = leadtime_indices
-
-            predictors = dataset.variables["predictors"][It, :, :, Ip]
-            # Merge static predictors
-            if len(dataset.dimensions["static_predictor"]) > 0:
-                static_predictors0 = dataset.variables["static_predictors"][It, :, :, Ips]
-                static_predictors = np.zeros(list(predictors.shape[0:-1]) + [static_predictors0.shape[-1]], np.float32)
-                for lt in range(predictors.shape[0]):
-                    static_predictors[lt, ...] = static_predictors0
-                predictors = np.concatenate((predictors, static_predictors), axis=3)
-
-            targets = dataset.variables["target_mean"][It, :, :]
-            targets = np.expand_dims(targets, 3)
-
-        p, t = predictors, targets
-        self.debug("Finished parsing", time.time() - s_time)
-        # p, t = tf.convert_to_tensor(predictors), tf.convert_to_tensor(targets)
-        # self.debug("Convert", time.time() - s_time)
-        return p, t
-
-    def print(self, message):
-        curr_time = time.time() - self.start_time
-        print(f"{curr_time:.2f}: {message}")
-
-    @property
     def size_gb(self):
-        return self.get_data_size() / 1024**3
+        """Returns the number of bytes needed to store the full dataset"""
+        size_bytes = np.product(self.predictor_shape) * 4
+        size_bytes += np.product(self.target_shape) * 4
+        return size_bytes * len(self.filenames) * self.num_patches_per_file / 1024 ** 3
+
+    def check_compatibility(self, other_loader):
+        status = self.predictor_names == other_loader.predictor_names
+        status &= self.predict_diff == other_loader.predict_diff
+        status &= self.probabilistic_target == other_loader.probabilistic_target
+        return status
+
+    def get_time_from_batch(self, batch, sample):
+        file_index = batch // self.num_batches_per_file
+        return self.times[file_index]
+
+    def get_leadtime_from_batch(self, batch, sample, ileadtime):
+        if self.with_leadtime:
+            leadtime_index = ileadtime
+        else:
+            assert ileadtime == 0
+            sample_index = batch * self.batch_size + sample
+            leadtime_index = sample_index % self.num_leadtimes
+        # print(batch, sample, sample_index, leadtime_index)
+        return self.leadtimes[leadtime_index]

@@ -6,7 +6,7 @@ import time
 
 import netCDF4
 import numpy as np
-from tensorflow import keras
+import tensorflow as tf
 
 import maelstrom
 
@@ -18,8 +18,59 @@ import maelstrom
     model.fit(dataset, callbacks=callbacks)
 """
 
+def get(name, args, logger=None, model=None, output_folder=None):
+    if name == "early_stopping":
+        return tf.keras.callbacks.EarlyStopping(**args)
+    elif name == "weights":
+        if output_folder is None:
+            raise ValueError("Convergence callback requires output_folder")
+        filename = args["filename"]
+        filename = f"{output_folder}/{filename}"
+        return WeightsCallback(model, filename)
+    elif name == "convergence":
+        if output_folder is None:
+            raise ValueError("Convergence callback requires output_folder")
+        filename = args["filename"]
+        filename = f"{output_folder}/{filename}"
+        args["filename"] = filename
+        return Convergence(**args)
+    elif name == "timing":
+        return Timing(logger)
+    elif name == "checkpoint":
+        checkpoint_metric = 'val_loss'
 
-class WeightsCallback(keras.callbacks.Callback):
+        checkpoint_filepath = f"{output_folder}/checkpoint"
+        model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+            filepath=checkpoint_filepath,
+            save_weights_only=True,
+            monitor=checkpoint_metric,
+            verbose=1,
+            mode='min',
+            save_best_only=True
+        )
+        return model_checkpoint_callback
+    else:
+        raise ValueError(f"Unknown callback with name={name}")
+
+def get_from_config(config, logger, model, output_folder):
+    callbacks = list()
+    if "callbacks" in config:
+        for callback_config in config["callbacks"]:
+            cb_args = {k:v for k,v in callback_config.items() if k != "type"}
+            callbacks += [get(callback_config["type"], cb_args,
+                logger, model, output_folder)]
+    else:
+        callbacks += maelstrom.callback.get_default(logger, model, output_folder)
+    return callbacks
+
+def get_default(logger, model, output_folder):
+    callbacks = list()
+    callbacks += [get("checkpoint", {}, output_folder=output_folder)]
+    callbacks += [get("timing", {}, logger=logger)]
+    callbacks += [get("convergence", {"filename": "loss.txt"}, output_folder=output_folder)]
+    return callbacks
+
+class WeightsCallback(tf.keras.callbacks.Callback):
     """Writes parameter weights and metrics to netCDF file. The callback records values as training
     progresses and writes the file when training is finished
     """
@@ -135,7 +186,7 @@ class WeightsCallback(keras.callbacks.Callback):
                 var[:] = np.array(v)
 
 
-class Timing(keras.callbacks.Callback):
+class Timing(tf.keras.callbacks.Callback):
     """Class for reporting maelstrom timing results for benchmarking"""
 
     def __init__(self, logger):
@@ -183,7 +234,7 @@ class Timing(keras.callbacks.Callback):
         return self.results
 
 
-class Convergence(keras.callbacks.Callback):
+class Convergence(tf.keras.callbacks.Callback):
     """Write (training and test) loss information to text file
 
     Deprecated. Use Validation instead
@@ -192,9 +243,9 @@ class Convergence(keras.callbacks.Callback):
     def __init__(
         self,
         filename,
-        verif_style=False,
+        verif_style=True,
         flush_each_epoch=True,
-        include_batch_logs=False,
+        include_batch_logs=True,
         leadtime_is_batch=False,
     ):
         """Initialize object
@@ -267,8 +318,8 @@ class Convergence(keras.callbacks.Callback):
                 # Rename certain headings to verif-compatible fields
                 rename = dict()
                 rename["epoch"] = "leadtime"
-                # rename["loss"] = "fcst"
-                # rename["val_loss"] = "obs"
+                rename["loss"] = "fcst"
+                rename["val_loss"] = "obs"
 
                 keys = [rename[k] if k in rename else k for k in keys]
             self.file.write(" ".join([f"{k}" for k in keys]))
@@ -293,7 +344,7 @@ class Convergence(keras.callbacks.Callback):
         return self.results
 
 
-class Validation(keras.callbacks.Callback):
+class Validation(tf.keras.callbacks.Callback):
     """This callback runs validation after a certain number of batches and stores training scores
 
     Args:
@@ -488,7 +539,7 @@ class Validation(keras.callbacks.Callback):
                 self.logger.add("Scores", k, v)
 
 
-class Testing(keras.callbacks.Callback):
+class Testing(tf.keras.callbacks.Callback):
     def __init__(self, filename, leadtimes, loss):
         self.filename = filename
         self.leadtimes = leadtimes

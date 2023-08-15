@@ -1,12 +1,66 @@
 import collections
+import numpy as np
 import os
 import pkgutil
-
-import numpy as np
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+import tensorflow as tf
 import yaml
+
+tf.random.set_seed(1000)
+np.random.seed(1000)
 
 __version__ = "0.1.0"
 
+
+def map_decorator1_to_1(func):
+    """Decorator to wrap a 1-argument function as a tf.py_function"""
+    def wrapper(self, i):
+        return tf.py_function(
+                lambda i: func(self, i),
+                inp=(i,),
+                Tout=(tf.float32, )
+                )
+    return wrapper
+
+def map_decorator1_to_3(func):
+    """Decorator to wrap a 1-argument function as a tf.py_function"""
+    def wrapper(self, i):
+        return tf.py_function(
+                lambda i: func(self, i),
+                inp=(i,),
+                Tout=(tf.float32, tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator2_to_2(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j):
+        return tf.py_function(
+                lambda i, j: func(self, i, j),
+                inp=(i, j),
+                Tout=(tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator3_to_2(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j, k):
+        return tf.py_function(
+                lambda i, j, k: func(self, i, j, k),
+                inp=(i, j, k),
+                Tout=(tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator3_to_3(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j, k):
+        return tf.py_function(
+                lambda i, j, k: func(self, i, j, k),
+                inp=(i, j, k),
+                Tout=(tf.float32, tf.float32, tf.float32)
+                )
+    return wrapper
 
 def load_yaml(filename):
     """Load yaml from file and return dictionary
@@ -77,3 +131,7 @@ def main():
     import maelstrom.__main__
 
     maelstrom.__main__.main()
+
+def predict():
+    import maelstrom.predict
+    maelstrom.predict.main()

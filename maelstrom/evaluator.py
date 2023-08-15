@@ -45,36 +45,26 @@ class Verif(Evaluator):
         # A cache for the observations: valid_time -> observations
         self.obs_cache = set()
 
-    def evaluate(self, forecast_reference_time, fcst, targets):
-        assert len(fcst.shape) == 5
-
-        if fcst.shape[0] > 1:
-            raise ValueError(
-                f"Cannot create Verif file for datasets with multiple samples/patches ({fcst.shape[0]}) per forecast_reference_time"
-            )
-        assert fcst.shape[0] == 1
-        assert targets.shape[0] == 1
+    def evaluate(self, forecast_reference_time, leadtime, fcst, targets):
+        assert len(fcst.shape) == 3
 
         # Add observations
-        for j in range(len(self.leadtimes)):
-            curr_valid_time = forecast_reference_time + self.leadtimes[j]
-            if curr_valid_time not in self.obs_cache:
-                curr_obs = np.reshape(
-                    targets[0, j, :: self.sampling, :: self.sampling, 0],
-                    [self.points.size()],
-                )
-                self.file.add_observations(curr_valid_time, curr_obs)
-                self.obs_cache.add(curr_valid_time)
-                # print("obs:", curr_obs)
+        curr_obs = np.reshape(
+            targets[:: self.sampling, :: self.sampling, 0],
+            [self.points.size()],
+        )
+        self.file.add_observations(forecast_reference_time + leadtime, curr_obs)
+        self.obs_cache.add(curr_valid_time)
+        # print("obs:", curr_obs)
 
         # Add determinsitic forecast
         if 0.5 in self.quantiles:
             I50 = self.quantiles.index(0.5)
 
-            curr_fcst = fcst[0, ..., I50]
+            curr_fcst = fcst[..., I50]
 
             curr_fcst = np.reshape(
-                curr_fcst[:, :: self.sampling, :: self.sampling],
+                curr_fcst[:: self.sampling, :: self.sampling],
                 [len(self.leadtimes), self.points.size()],
             )
             self.file.add_forecast(forecast_reference_time, curr_fcst)
@@ -102,29 +92,25 @@ class Aggregator(Evaluator):
         with open(self.filename, "w") as file:
             file.write("unixtime leadtime obs fcst loss\n")
 
-    def evaluate(self, forecast_reference_time, fcst, targets):
+    def evaluate(self, forecast_reference_time, leadtime, fcst, targets):
         """
         Args:
             forecast_reference_time (float): Forecast reference time of forecasts
-            fcst (np.array): 5D array of forecasts (sample, leadtime, y, x, output_variable)
-            targets (np.array): 5D array of targets (sample, leadtime, y, x, target_variable)
+            fcst (np.array): 4D array of forecasts (y, x, output_variable)
+            targets (np.array): 4D array of targets (y, x, target_variable)
         """
-        assert len(fcst.shape) == 5
-        assert len(targets.shape) == 5
+        assert len(fcst.shape) == 3
+        assert len(targets.shape) == 3
 
         with open(self.filename, "a") as file:
-            for i in range(fcst.shape[1]):
-                leadtime = self.leadtimes[i] // 3600
-                curr_fcst = fcst[:, [i], ...]
-                curr_targets = targets[:, [i], ...]
-                curr_loss = self.loss(curr_targets, curr_fcst)
-                file.write(
-                    "%d %d %.5f %.5f %.5f\n"
-                    % (
-                        forecast_reference_time,
-                        leadtime,
-                        np.nanmean(curr_targets),
-                        np.nanmean(curr_fcst),
-                        curr_loss,
-                    )
+            curr_loss = self.loss(targets, fcst)
+            file.write(
+                "%d %d %.5f %.5f %.5f\n"
+                % (
+                    forecast_reference_time,
+                    leadtime // 3600,
+                    np.nanmean(targets),
+                    np.nanmean(fcst),
+                    curr_loss,
                 )
+            )

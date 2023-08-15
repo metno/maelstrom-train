@@ -221,6 +221,17 @@ class SeparableConv2D(keras.layers.Layer):
         return self.layer(inputs)
 
 
+class DepthwiseConv2D(keras.layers.Layer):
+    def __init__(self, *args, **kwargs):
+        self.layer = keras.layers.TimeDistributed(
+            keras.layers.DepthwiseConv2D(*args, **kwargs)
+        )
+        super().__init__()
+
+    def call(self, inputs):
+        return self.layer(inputs)
+
+
 class TimeDistributedConv2D(keras.layers.Layer):
     def __init__(self, *args, **kwargs):
         self.layer = keras.layers.TimeDistributed(keras.layers.Conv2D(*args, **kwargs))

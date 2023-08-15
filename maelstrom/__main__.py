@@ -3,12 +3,11 @@ import copy
 import datetime
 import glob
 import json
+import numpy as np
 import os
 import sys
 import time
 import math
-
-import numpy as np
 import tqdm
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -16,25 +15,13 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow import keras
 
-try:
-    from deep500.utils import timer_tf as timer
-    do_deep500 = True
-except Exception as e:
-    print("Cannot load deep500")
-    do_deep500 = False
-do_deep500 = False
-
-# os.environ["TF_CPP_MIN_LOG_LEVEL"] = "0"
-# os.environ["TF_GPU_ALLOCATOR"] = "cuda_malloc_async"
-
-
 tf.random.set_seed(1000)
 np.random.seed(1000)
 
 
 import maelstrom
 
-with_horovod = maelstromm.check_horovod()
+with_horovod = maelstrom.check_horovod()
 if with_horovod:
     # Import it 
     print("Running with horovod")
@@ -46,7 +33,7 @@ def main():
     parser.add_argument( "--config", type=maelstrom.load_yaml, help="Configuration file containing output paths, etc", required=True, nargs="*",)
     parser.add_argument( "-j", type=int, help="Number of threads to train with", dest="num_threads",)
     parser.add_argument( "--hardware", default="gpu", help="What hardware to run on?", choices=["cpu", "gpu"],)
-    parser.add_argument( "-m", help="Only run these models", dest="subset_models", nargs="*", required=True,)
+    parser.add_argument( "-m", help="Run this model", dest="model", required=True)
     parser.add_argument( "-w", help="Print weights of the model", dest="print_weights", action="store_true",)
     parser.add_argument( "-o", default="results/%N_%T", help="Output folder", dest="output_folder",)
     parser.add_argument( "--seed", type=int, help="Random seed",)
@@ -138,6 +125,9 @@ def main():
         # Don't use batches for the test dataset
         # Otherwise the model.predict doesn't give a full output for some reason...
         dataset_val = loader_val.get_dataset()
+        # Check that loaders have the same predictors
+        if not loader.check_compatibility(loader_val):
+            raise Exception("Loaders do not have the same predictors in the same order")
 
     quantiles = config["output"]["quantiles"]
     num_outputs = len(quantiles)
@@ -145,245 +135,187 @@ def main():
     loss = maelstrom.loss.get(config["loss"], quantiles)
     metrics = []
     if loss not in [maelstrom.loss.mae, maelstrom.loss.mae_prob]:
+        # within_loss = maelstrom.loss.get({"type": "within"}, quantiles)
         metrics = [
-            maelstrom.loss.mae
+            # within_loss
+            # maelstrom.loss.mae
         ]  # [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
 
-    models = get_models(
+    model_name = args.model
+    model, model_config = get_model(
         loader,
         num_outputs,
         config["models"],
-        args.subset_models,
+        args.model,
         with_horovod,
     )
 
-    if len(models) == 0:
-        raise Exception("No models selected")
+    start_time = time.time()
+    dt = datetime.datetime.utcfromtimestamp(int(start_time))
+    date, hour = maelstrom.util.unixtime_to_date(start_time)
+    minute = dt.minute
+    second = dt.second
+    curr_time = f"{date:08d}T{hour:02d}{minute:02d}{second:02d}Z"
+    output_folder = args.output_folder.replace("%T", curr_time).replace(
+        "%N", model_name
+    )
 
-    for model_name, model_config in models.items():
-        start_time = time.time()
-        dt = datetime.datetime.utcfromtimestamp(int(start_time))
-        date, hour = maelstrom.util.unixtime_to_date(start_time)
-        minute = dt.minute
-        second = dt.second
-        curr_time = f"{date:08d}T{hour:02d}{minute:02d}{second:02d}Z"
-        output_folder = args.output_folder.replace("%T", curr_time).replace(
-            "%N", model_name
-        )
+    optimizer = maelstrom.optimizer.get(**config["training"]["optimizer"])
+    if with_horovod:
+        optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
+                average_aggregated_gradients=True)
+    model.compile(
+        optimizer=optimizer,
+        loss=loss,
+        metrics=metrics,
+        experimental_run_tf_function=False,
+    )
 
-        model = model_config["model"]
-        optimizer = maelstrom.optimizer.get(**config["training"]["optimizer"])
+    if main_process:
+        print(model.summary())
+
+        config_logger = maelstrom.logger.Logger(f"{output_folder}/config.yml")
+        config_to_save = copy.copy(config)
+        config_to_save["model"] = model_config
+        del config_to_save["models"]
+        config_logger.add(None, config_to_save)
+        config_logger.write()
+
+        logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
+
+    model_description = model.description()
+    model_description.update(model_config)
+    num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))
+    num_non_trainable_weights = int(np.sum([K.count_params(w) for w in model.non_trainable_weights]))
+    model_description["Num traininable parameters"] = num_trainable_weights
+    model_description["Num non-trainable parameters"] = num_non_trainable_weights
+    if main_process:
+        logger.add("Model", model_description)
+        logger.add("Model", "Config", model_config)
+        logger.add("Dataset", loader.description())
+        logger.add("Timing", "Start time", int(start_time))
+        # logger.add("Scores")
+        for section in config.keys():
+            if section not in ["models"]:
+                logger.add("Config", section.capitalize(), config[section])
+
+    validation_frequency = get_validation_frequency(config, loader)
+    # print(f"validation frequency {validation_frequency}")
+
+    # Set up callbacks
+    callbacks = list()
+    if args.do_train:
         if with_horovod:
-            optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
-                    average_aggregated_gradients=True)
-        model.compile(
-            optimizer=optimizer,
-            loss=loss,
-            metrics=metrics,
-            experimental_run_tf_function=False,
-        )
-
+            callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
+            callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
         if main_process:
-            print(model.summary())
+            callbacks += maelstrom.callback.get_from_config(config, logger, model, output_folder)
 
-            config_logger = maelstrom.logger.Logger(f"{output_folder}/config.yml")
-            config_logger.add(None, config)
-            config_logger.write()
+    s_time = time.time()
 
-            logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
+    # This is the keras way of running validation. However, now we do validation via a
+    # validation callback above instead.
+    keras_epochs = epochs
+    kwargs = {}
+    if with_horovod:
+        keras_epochs = int(epochs * loader.num_batches // hvd.size() // (validation_frequency))
+        # TODO:
+        kwargs["steps_per_epoch"] = validation_frequency
+        kwargs["verbose"] = main_process
+    else:
+        keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
+        kwargs["steps_per_epoch"] = validation_frequency
 
-        model_description = model.description()
-        model_description.update(model_config["settings"])
-        num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))
-        num_non_trainable_weights = int(np.sum([K.count_params(w) for w in model.non_trainable_weights]))
-        model_description["Num traininable parameters"] = num_trainable_weights
-        model_description["Num non-trainable parameters"] = num_non_trainable_weights
-        if main_process:
-            logger.add("Model", model_description)
-            logger.add("Dataset", loader.description())
-            logger.add("Timing", "Start time", int(start_time))
-            # logger.add("Scores")
-            for section in config.keys():
-                if section not in ["models"]:
-                    logger.add("Config", section.capitalize(), config[section])
-
-            timing_callback = maelstrom.callback.Timing(logger)
-        callbacks = list()
-        if args.do_train:
-            validation_frequency = get_validation_frequency(config, loader)
-            if with_horovod:
-                callbacks += [hvd.keras.callbacks.BroadcastGlobalVariablesCallback(0)]
-                callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
-                validation_frequency = math.ceil(validation_frequency / hvd.size())
-            if main_process:
-                print(f"Validation frequency: {validation_frequency}")
-                callbacks += [
-                    maelstrom.callback.Convergence(f"{output_folder}/{model_name}_loss.txt", True, True, True)
-                ]
-                callbacks += [timing_callback]
-
-                checkpoint_metric = 'loss'
-                if do_validation and main_process:
-                    """
-                    callbacks += [
-                        maelstrom.callback.Validation(
-                            f"{output_folder}/{model_name}_val.txt",
-                            model,
-                            dataset_val,
-                            validation_frequency,
-                            logger,
-                        )
-                    ]
-                    """
-                    checkpoint_metric = 'val_loss'
-
-                # Note that the ModelCheckpoint callback must be added after the validation
-                # callback, otherwise val_loss will not be recorded when the checkpoint callback is
-                # run.
-                if main_process:
-                    checkpoint_filepath = f"{output_folder}/checkpoint"
-
-                    # NOTE: save_freq must be "epoch", otherwise this callback gets run before the
-                    # end of the epoch, which is when the validation is computed.
-                    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-                        filepath=checkpoint_filepath,
-                        save_weights_only=True,
-                        save_freq="epoch", # validation_frequency,
-                        monitor=checkpoint_metric,
-                        verbose=1,
-                        mode='min',
-                        save_best_only=True
-                    )
-                    callbacks += [model_checkpoint_callback]
-                if 0 and num_trainable_weights < 1e5:
-                    callbacks += [
-                        maelstrom.callback.WeightsCallback(
-                            model, filename=f"{output_folder}/weights.nc"
-                        )
-                    ]
-                else:
-                    print(f"Too many trainable weights {num_trainable_weights}, not writing them out")
-                if "early_stopping" in config["training"]:
-                    callbacks += [
-                        tf.keras.callbacks.EarlyStopping(
-                            monitor="loss", **config["training"]["early_stopping"]
-                        )
-                    ]
-
-        s_time = time.time()
-
-        # This is the keras way of running validation. However, now we do validation via a
-        # validation callback above instead.
+    if do_validation:
+        kwargs["validation_data"] = dataset_val
+        keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
+    else:
         kwargs = {}
-        if with_horovod:
-            keras_epochs = int(epochs * loader.num_batches // hvd.size() // (validation_frequency))
-            kwargs["steps_per_epoch"] = validation_frequency
-            kwargs["verbose"] = main_process
-        else:
-            keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
-            kwargs["steps_per_epoch"] = validation_frequency
+    # kwargs["verbose"] = main_process
 
-        if do_validation:
-            kwargs = {"validation_data": dataset_val}
+    if main_process:
+        logger.add("Timing", "Training", "Start_time", int(time.time()))
+    curr_args = {k: v for k, v in config["training"]["trainer"].items()}
+    curr_args["model"] = model
+    curr_args["optimizer"] = optimizer
+    curr_args["loss"] = loss
+    trainer = maelstrom.trainer.get(**curr_args)
 
-        if main_process:
-            logger.add("Timing", "Training", "Start_time", int(time.time()))
-        curr_args = {k: v for k, v in config["training"]["trainer"].items()}
-        curr_args["model"] = model
-        curr_args["optimizer"] = optimizer
-        curr_args["loss"] = loss
-        trainer = maelstrom.trainer.get(**curr_args)
+    # Note: We could add a check for num_trainable_parameters > 0
+    # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
+    # and skip training (this could be the raw model for example). However, we might still want
+    # to run validation using the raw model, therefore we will still try to train it
+    if args.load_weights is not None and main_process:
+        input_checkpoint_filepath = args.load_weights + "/checkpoint"
+        print(f"Loading weights from {input_checkpoint_filepath}")
+        model.load_weights(input_checkpoint_filepath).expect_partial()
 
-        if main_process and do_deep500:
-            tmr = timer.CPUGPUTimer()
-            callbacks += [timer.TimerCallback(tmr, gpu=True)]
-        # Note: We could add a check for num_trainable_parameters > 0
-        # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
-        # and skip training (this could be the raw model for example). However, we might still want
-        # to run validation using the raw model, therefore we will still try to train it
-        if args.load_weights is not None and main_process:
-            input_checkpoint_filepath = args.load_weights + "/checkpoint"
-            print("Loading weights from {input_checkpoint_filepath}")
-            model.load_weights(input_checkpoint_filepath)
-        if args.do_train:
-            print("\n### Training ###")
+    if args.do_train:
+        print("\n### Training ###")
+        maelstrom.util.print_memory_usage()
+        history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
+                **kwargs)
+        print(f"Training time: {time.time() - ss_time}")
+        # TODO: Enable this
+        # if main_process:
+        #     model.load_weights(checkpoint_filepath)
+    else:
+        history = None
+
+    if main_process:
+        logger.add("Timing", "Training", "end_time", int(time.time()))
+
+        if args.do_test:
+            print(f"\n### Testing ###")
             maelstrom.util.print_memory_usage()
-            # history = trainer.fit(dataset, epochs=epochs, callbacks=callbacks, **kwargs)
-            # NOTE: When keras run with a generator with unknown length, we need to tell keras how
-            # long it is. DO this by specifying steps_per_epoch, and then making dataset repeat
-            # itself.
-            ss_time = time.time()
-            if main_process:
-                print(epochs, keras_epochs, validation_frequency)
-                print("Callbacks:")
-                for callback in callbacks:
-                    print("   ", callback)
-            history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
-                    **kwargs)
-            print(f"Training time: {time.time() - ss_time}")
-            if main_process and do_deep500:
-                tmr.complete_all()
-                tmr.print_all_time_stats()
-            # TODO: Enable this
-            # if main_process:
-            #     model.load_weights(checkpoint_filepath)
-        else:
-            history = None
+            s_time = time.time()
+            eval_results = testing(
+                config["evaluators"],
+                loader_test,
+                quantiles,
+                trainer,
+                output_folder,
+                model_name,
+            )
+            logger.add("Timing", "Testing", "total_time", time.time() - s_time)
+            for k, v in eval_results.items():
+                logger.add("Scores", k, v)
+            print(eval_results)
+            maelstrom.util.print_memory_usage()
 
-        if main_process:
-            logger.add("Timing", "Training", "end_time", int(time.time()))
+        # Write loader statistics
+        for name, curr_time in loader.timing.items():
+            logger.add("Timing", "Loader", name, curr_time)
+        logger.add("Timing", "Loader", "num_files_read", loader.count_reads)
 
-            if args.do_test:
-                print(f"\n### Testing ###")
-                maelstrom.util.print_memory_usage()
-                s_time = time.time()
-                eval_results = testing(
-                    config["evaluators"],
-                    loader_test,
-                    quantiles,
-                    trainer,
-                    output_folder,
-                    model_name,
-                )
-                logger.add("Timing", "Testing", "total_time", time.time() - s_time)
-                for k, v in eval_results.items():
-                    logger.add("Scores", k, v)
-                print(eval_results)
-                maelstrom.util.print_memory_usage()
+        if loader_val is not None and loader_val != loader:
+            for name, curr_time in loader_val.timing.items():
+                logger.add("Timing", "Validation loader", name, curr_time)
+            logger.add(
+                "Timing",
+                "Validation loader",
+                "num_files_read",
+                loader_val.count_reads,
+            )
 
-            # Write loader statistics
-            for name, curr_time in loader.timing.items():
-                logger.add("Timing", "Loader", name, curr_time)
-            logger.add("Timing", "Loader", "num_files_read", loader.count_reads)
+        if loader_test != loader:
+            for name, curr_time in loader_test.timing.items():
+                logger.add("Timing", "Test loader", name, curr_time)
+            logger.add(
+                "Timing", "Test loader", "num_files_read", loader_test.count_reads
+            )
 
-            if loader_val is not None and loader_val != loader:
-                for name, curr_time in loader_val.timing.items():
-                    logger.add("Timing", "Validation loader", name, curr_time)
-                logger.add(
-                    "Timing",
-                    "Validation loader",
-                    "num_files_read",
-                    loader_val.count_reads,
-                )
+        if args.print_weights:
+            for layer in model.layers:
+                print(layer.get_weights())
 
-            if loader_test != loader:
-                for name, curr_time in loader_test.timing.items():
-                    logger.add("Timing", "Test loader", name, curr_time)
-                logger.add(
-                    "Timing", "Test loader", "num_files_read", loader_test.count_reads
-                )
-
-            if args.print_weights:
-                for layer in model.layers:
-                    print(layer.get_weights())
-
-            # Add final information to logger
-            if history is not None:
-                for key in history.history.keys():
-                    logger.add("Scores", key, history.history[key][-1])
-            logger.add("Timing", "End time", int(time.time()))
-            logger.add("Timing", "Total", time.time() - s_time)
-            logger.write()
+        # Add final information to logger
+        if history is not None:
+            for key in history.history.keys():
+                logger.add("Scores", key, history.history[key][-1])
+        logger.add("Timing", "End time", int(time.time()))
+        logger.add("Timing", "Total", time.time() - s_time)
+        logger.write()
 
 
 def get_loaders(config):
@@ -416,40 +348,34 @@ def get_loaders(config):
     return loader, loader_val, loader_test
 
 
-def get_models(loader, num_outputs, configs, subset_models=None, multi=False):
-    input_shape = [1] + loader.predictor_shape[1:]
+def get_model(loader, num_outputs, configs, model, multi=False):
+    input_shape = loader.sample_predictor_shape
     if multi:
         gpus = tf.config.list_logical_devices("GPU")
         strategy = tf.distribute.MirroredStrategy(gpus[0:2])
-    models = dict()
+
     for config in configs:
         if "name" not in config:
             name = config["type"]
         else:
             name = config["name"]
-        if "disabled" in config:
-            continue
-        args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
-        if subset_models is not None:
-            models_lower_name = [n.lower() for n in subset_models]
-            new_models = list()
-            if name.lower() not in models_lower_name:
-                continue
+        if name.lower() == model.lower():
+            args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
-        if args["type"].lower() == "selectpredictor":
-            args["indices"] = list()
-            for predictor_name in args["predictor_names"]:
-                args["indices"] += [loader.predictor_names.index(predictor_name)]
-            del args["predictor_names"]
+            if args["type"].lower() == "selectpredictor":
+                args["indices"] = list()
+                for predictor_name in args["predictor_names"]:
+                    args["indices"] += [loader.predictor_names.index(predictor_name)]
+                del args["predictor_names"]
 
-        if multi:
-            with strategy.scope():
+            if multi:
+                with strategy.scope():
+                    model = maelstrom.models.get(input_shape, num_outputs, **args)
+            else:
                 model = maelstrom.models.get(input_shape, num_outputs, **args)
-        else:
-            model = maelstrom.models.get(input_shape, num_outputs, **args)
-        models[name] = {"model": model, "settings": args}
-    return models
+            return model, args
+    raise ValueError(f"Model {model} not defined in configuration file")
 
 
 def testing(config, loader, quantiles, trainer, output_folder, model_name):
@@ -492,55 +418,45 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
         """
         dataset = loader.get_dataset()
         forecast_reference_times = loader.times
-        samples_per_file = loader.num_samples_per_file * loader.num_patches_per_sample
+        samples_per_file = loader.num_samples_per_file
         num_files = loader.num_files
 
         ss_time = time.time()
-        output = None
 
-        # This for loop iterates over each sample, not each file
-        for batch, (fcst, targets) in enumerate(dataset):
-            assert fcst.shape[0] == 1
-            targets = np.copy(targets)
+        for batch, (bfcst, btargets) in enumerate(dataset):
+            btargets = np.copy(btargets)
+            bpred = trainer.predict_on_batch(bfcst)
+            # print("Mean", batch, np.mean(bpred), np.mean(btargets), np.mean(bfcst))
 
-            first_batch_in_file = batch % samples_per_file == 0
-            last_batch_in_file = (batch + 1) % samples_per_file == 0
-            batch_in_file = batch % samples_per_file
+            num_outputs = bpred.shape[-1]
 
-            if first_batch_in_file:
-                file_index = batch // samples_per_file
-                forecast_reference_time = forecast_reference_times[
-                    batch // samples_per_file
-                ]
-                date, hour = maelstrom.util.unixtime_to_date(forecast_reference_time)
-                print(f"Processing {date:08d}T{hour:02d}Z ({file_index+1}/{num_files})")
-
-            curr_output = trainer.predict_on_batch(fcst)
-            if output is None:
-                new_shape = [samples_per_file] + list(curr_output.shape[1:])
-                output = np.nan * np.zeros(new_shape, np.float32)
-
-            num_outputs = curr_output.shape[-1]
-
+            # Undo the prediction difference
             if loader.predict_diff:
-                targets[..., 0] += fcst[..., Ip]
+                btargets[..., 0] += bfcst[..., Ip]
                 for p in range(num_outputs):
-                    curr_output[..., p] += fcst[..., Ip]
-            output[batch_in_file, ...] = curr_output[0, ...]
+                    bpred[..., p] += bfcst[..., Ip]
 
-            curr_loss = float(loss(targets, curr_output))
+            curr_loss = float(loss(btargets, bpred))
             total_loss += curr_loss
-
-            if last_batch_in_file:
-                # Only run the evaluation when we have finished all batches in the file
-                for evaluator in evaluators:
-                    evaluator.evaluate(forecast_reference_time, output, targets)
-                print("   Time: %.2f" % (time.time() - ss_time))
-                maelstrom.util.print_memory_usage("   ")
-                ss_time = time.time()
-                output = None
-
             count += 1
+
+            for sample in range(bpred.shape[0]):
+                forecast_reference_time = loader.get_time_from_batch(batch, sample)
+                date, hour = maelstrom.util.unixtime_to_date(forecast_reference_time)
+                for ileadtime in range(bpred.shape[1]):
+                    leadtime = loader.get_leadtime_from_batch(batch, sample, ileadtime)
+
+                    fcst = bfcst[sample, ileadtime, ...]
+                    pred = bpred[sample, ileadtime, ...]
+                    targets = btargets[sample, ileadtime, ...]
+
+                    # print(f"Processing {date:08d}T{hour:02d}Z ({file_index+1}/{num_files})")
+
+                    for evaluator in evaluators:
+                        evaluator.evaluate(forecast_reference_time, leadtime, pred, targets)
+            # print("   Time: %.2f" % (time.time() - ss_time))
+            # maelstrom.util.print_memory_usage("   ")
+            ss_time = time.time()
 
         total_loss /= count
 
@@ -648,7 +564,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
 
 
 def get_validation_frequency(config, loader):
-    validation_frequency = loader.num_patches_per_file
+    validation_frequency = loader.num_batches_per_file
     if "validation_frequency" in config["training"]:
         words = config["training"]["validation_frequency"].split(" ")
         if len(words) != 2:
@@ -658,15 +574,9 @@ def get_validation_frequency(config, loader):
         freq, freq_units = words
         freq = int(freq)
         if freq_units == "epoch":
-            # if freq == 1:
-            #     validation_frequency = None
-            # else:
-            validation_frequency = int(
-                loader.num_samples * freq /
-                config["loader"]["batch_size"]
-            )
+            validation_frequency = loader.num_batches * freq
         elif freq_units == "file":
-            validation_frequency = loader.num_samples_per_file * freq
+            validation_frequency = loader.num_batches_per_file * freq
         elif freq_units == "batch":
             validation_frequency = freq
         else:
