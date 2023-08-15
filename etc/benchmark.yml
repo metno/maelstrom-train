@@ -3,35 +3,31 @@
 training:
     trainer:
         type: keras
-        # type: trainer
-        # steps: 1
     optimizer:
         type: adam
         learning_rate:
             type: piecewise
-            boundaries: [640] # Number of samples (not epochs)
-            values: [1.0e-3, 1.0e-3]
+            boundaries: [10] # Number of samples (not epochs)
+            values: [1.0e-2, 1.0e-3]
     num_epochs: 10
     validation_frequency: 1 epoch # file
-    # validation_frequency: 2 file
 loader:
     type: file
-    # filenames: [ "data/air_temperature/5TB/2020*1T*Z.nc"]
-    filenames: [ "data/air_temperature/5TB/2020030*T*Z.nc", "data/air_temperature/5TB/2020031[012]T*Z.nc"]
-    normalization: "data/air_temperature/normalization.yml"
-    # limit_leadtimes: [0, 24, 48]
-    # patch_size: 256
+    # filenames: [ "data/air_temperature/5TB/20200301T*Z.nc"]  # One file
+    filenames: [ "data/air_temperature/5TB/2020*1T*Z.nc"]    # 36 files
+    # filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20220[12]*T*Z.nc"]
+    normalization: data/air_temperature/normalization.yml
     predict_diff: True
-    with_leadtime: False
+    patch_size: 512
     batch_size: 63
-    prefetch: 1
+    with_leadtime: False
     num_parallel_calls: 12
-    debug: True
+    debug: False
     extra_features:
         - type: leadtime
         - type: x
         - type: y
-loader_validation1:
+loader_validation:
     type: file
     # filenames: [ "data/air_temperature/5TB/2021030[12]T*Z.nc"]
     filenames: ["data/air_temperature/5TB/20210301T*Z.nc",
@@ -54,19 +50,18 @@ loader_validation1:
                 "data/air_temperature/5TB/20211115T*Z.nc",
                 "data/air_temperature/5TB/20211202T*Z.nc",
                 "data/air_temperature/5TB/20211216T*Z.nc",
-                "data/air_temperature/5TB/20210101T*Z.nc",
-                "data/air_temperature/5TB/20210115T*Z.nc",
-                "data/air_temperature/5TB/20210202T*Z.nc",
-                "data/air_temperature/5TB/20210216T*Z.nc"
+                "data/air_temperature/5TB/20220101T*Z.nc",
+                "data/air_temperature/5TB/20220115T*Z.nc",
+                "data/air_temperature/5TB/20220202T*Z.nc",
+                "data/air_temperature/5TB/20220216T*Z.nc"
     ]
-    normalization: "data/air_temperature/normalization.yml"
-    # limit_leadtimes: [0, 24, 48]
+    normalization: data/air_temperature/normalization.yml
     patch_size: 256
+    batch_size: 1
     predict_diff: True
     with_leadtime: False
-    batch_size: 100
-    prefetch: 1
     num_parallel_calls: 12
+    probabilistic_target: True
     debug: False
     cache: True
     x_range: 300:1068
@@ -84,13 +79,15 @@ models:
     - type: Unet
       name: unet
       levels: 6
-      with_leadtime: False
-    - type: LocallyConnected
-      name: local
+    - type: dense
+      layers: 3
+      units: 12
+      activation: "relu"
 output:
-    quantiles: [0.5, 0.1, 0.9]
+    quantiles: [0.1, 0.5, 0.9]
 loss:
-    type: quantile_score
+    type: quantile_score_prob
+    trim: 10
 evaluators:
     - type: aggregator
 tensorflow:

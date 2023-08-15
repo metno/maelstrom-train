@@ -1,0 +1,109 @@
+# This configuration is used to benchmark HPC systems
+# It runs the benchmark model for a single file, over multiple epochs
+training:
+    trainer:
+        type: keras
+    optimizer:
+        type: adam
+        learning_rate:
+            type: piecewise
+            boundaries: [10] # Number of samples (not epochs)
+            values: [1.0e-2, 1.0e-3]
+    num_epochs: 10
+    validation_frequency: 1 epoch # file
+loader:
+    type: file
+    # filenames: [ "data/air_temperature/5GB/20200301T*Z.nc"]  # One file
+    filenames: [ "data/air_temperature/5GB/2020*1T*Z.nc"]    # 36 files
+    # filenames: [ "data/air_temperature/5GB/2020*T*Z.nc", "data/air_temperature/5GB/20220[12]*T*Z.nc"]
+    normalization: data/air_temperature/normalization.yml
+    # limit_predictors: ["air_temperature_2m", "altitude", "model_altitude", "bias_recent"]
+    # limit_predictors: ["air_temperature_2m"]
+    predict_diff: True
+    # patch_size: 32
+    batch_size: 1
+    with_leadtime: False
+    num_parallel_calls: 24
+    probabilistic_target: True
+    debug: False
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+loader_validation:
+    type: file
+    # filenames: [ "data/air_temperature/5GB/2021030[12]T*Z.nc"]
+    filenames: ["data/air_temperature/5GB/20210301T*Z.nc",
+                "data/air_temperature/5GB/20210315T*Z.nc",
+                "data/air_temperature/5GB/20210402T*Z.nc",
+                "data/air_temperature/5GB/20210416T*Z.nc",
+                "data/air_temperature/5GB/20210501T*Z.nc",
+                "data/air_temperature/5GB/20210515T*Z.nc",
+                "data/air_temperature/5GB/20210602T*Z.nc",
+                "data/air_temperature/5GB/20210616T*Z.nc",
+                "data/air_temperature/5GB/20210701T*Z.nc",
+                "data/air_temperature/5GB/20210715T*Z.nc",
+                "data/air_temperature/5GB/20210802T*Z.nc",
+                "data/air_temperature/5GB/20210816T*Z.nc",
+                "data/air_temperature/5GB/20210901T*Z.nc",
+                "data/air_temperature/5GB/20210915T*Z.nc",
+                "data/air_temperature/5GB/20211002T*Z.nc",
+                "data/air_temperature/5GB/20211016T*Z.nc",
+                "data/air_temperature/5GB/20211101T*Z.nc",
+                "data/air_temperature/5GB/20211115T*Z.nc",
+                "data/air_temperature/5GB/20211202T*Z.nc",
+                "data/air_temperature/5GB/20211216T*Z.nc",
+                "data/air_temperature/5GB/20220101T*Z.nc",
+                "data/air_temperature/5GB/20220115T*Z.nc",
+                "data/air_temperature/5GB/20220202T*Z.nc",
+                "data/air_temperature/5GB/20220216T*Z.nc"
+    ]
+    normalization: data/air_temperature/normalization.yml
+    # limit_leadtimes: [0, 2]
+    # limit_predictors: ["air_temperature_2m", "altitude", "model_altitude", "bias_recent"]
+    # limit_predictors: ["air_temperature_2m"]
+    # patch_size: 32
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 48
+    probabilistic_target: True
+    debug: False
+    cache: True
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+models:
+    - type: BasicBenchmark
+      name: cnn
+      leadtime_dependent: False
+      neighbourhood_size: 3
+      filter_sizes: [12, 5, 5]
+    - type: Unet
+      name: unet
+      levels: 3
+      features: 4
+      upsampling_type: upsampling
+      # upsampling_type: conv_transpose
+      with_leadtime: False
+    - type: Unet
+      name: unet6
+      levels: 6
+      features: 16
+      upsampling_type: upsampling
+      # upsampling_type: conv_transpose
+      with_leadtime: False
+    - type: dense
+      layers: 3
+      units: 12
+      activation: "relu"
+output:
+    quantiles: [0.1, 0.5, 0.9]
+loss:
+    type: quantile_score_prob
+    trim: 10
+evaluators:
+    - type: aggregator
+tensorflow:
+    num_threads: 48
