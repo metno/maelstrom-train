@@ -210,6 +210,7 @@ def main():
     # validation callback above instead.
     kwargs = {}
     if do_validation:
+        kwargs["validation_data"] = dataset_val
         keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
         if with_horovod:
             kwargs["verbose"] = main_process
@@ -219,7 +220,6 @@ def main():
         kwargs["steps_per_epoch"] = loader.num_batches
 
     # if do_validation:
-    #     kwargs["validation_data"] = dataset_val
     #     keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
     # kwargs["verbose"] = main_process
     print("keras_epochs:", keras_epochs)
