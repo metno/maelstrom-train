@@ -317,11 +317,12 @@ def main():
         logger.write()
 
 
-def get_loaders(config):
+def get_loaders(config, with_horovod):
     """Initializes the loaders needed
 
     Args:
         config (dict): Dictionary with configuration
+        with_horovod (bool): Deal with horovod?
 
     Returns:
         loader: Loader for training
@@ -333,16 +334,16 @@ def get_loaders(config):
         raise ValueError("'loader' section not specified in YAML")
 
     loader_config = config["loader"]
-    loader = maelstrom.loader.Loader.from_config(loader_config)
+    loader = maelstrom.loader.Loader.from_config(loader_config, with_horovod)
     loader_test = loader
     loader_val = None
 
     if "loader_validation" in config:
-        loader_val = maelstrom.loader.Loader.from_config(config["loader_validation"])
+        loader_val = maelstrom.loader.Loader.from_config(config["loader_validation"], with_horovod)
         loader_test = loader_val
 
     if "loader_test" in config:
-        loader_test = maelstrom.loader.Loader.from_config(config["loader_test"])
+        loader_test = maelstrom.loader.Loader.from_config(config["loader_test"], with_horovod)
 
     return loader, loader_val, loader_test
 

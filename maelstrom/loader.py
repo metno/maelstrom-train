@@ -38,6 +38,7 @@ class Loader:
         create_fake_data=False,
         to_gpu=True,
         with_leadtime=True,
+        with_horovod=False,
     ):
         """Initialize data loader
         
@@ -60,12 +61,10 @@ class Loader:
             create_fake_data (bool): Generate fake data, instead of reading from file
             to_gpu (bool): Move final tensors to GPU in the data processing pipeline
             with_leadtime (bool): Include leadtime dimension in one sample
+            with_horovod (bool): Deal with horovod?
         """
         self.debug = debug
-        self.filenames = list()
         self.extra_features = extra_features
-        for f in filenames:
-            self.filenames += glob.glob(f)
         self.limit_predictors = limit_predictors
         self.limit_leadtimes = limit_leadtimes
         self.x_range = x_range
@@ -79,6 +78,22 @@ class Loader:
         self.create_fake_data = create_fake_data
         self.num_parallel_calls = num_parallel_calls
         self.probabilistic_target = probabilistic_target
+        self.with_horovod = with_horovod
+
+        self.filenames = list()
+        for f in filenames:
+            self.filenames += glob.glob(f)
+
+        if self.with_horovod:
+            if len(self.filenames) == 0:
+                raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
+            start = hvd.rank() * math.ceil(len(self.filenames) // hvd.size())
+            end = (hvd.rank() + 1 ) * math.ceil(len(self.filenames) // hvd.size())
+            if end > len(self.filenames):
+                end = len(self.filenames)
+            self.filenames = [self.filenames[f] for f in range(start, end)]
+            if len(self.filenames) == 0:
+                raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
 
         self.logger = maelstrom.timer.Timer("test.txt")
         self.timing = collections.defaultdict(lambda: 0)
@@ -107,9 +122,10 @@ class Loader:
 
 
     @staticmethod
-    def from_config(config):
+    def from_config(config, with_horovod):
         """Returns a Loader object based on a configuration dictionary"""
         kwargs = {k:v for k,v in config.items() if k != "type"}
+        kwargs["with_horovod"] = with_horovod
         range_variables = ["x_range", "y_range", "limit_leadtimes"]
 
         # Process value arguments
