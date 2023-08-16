@@ -156,8 +156,9 @@ def main():
         training_time = time.time() - ss_time
         ss_time = time.time()
 
-        create_directory("results")
-        model.save("results/model")
+        if main_process:
+            create_directory("results")
+            model.save("results/model")
         saving_time = time.time() - ss_time
         time_first_sample = None
     elif args.mode == "load":
