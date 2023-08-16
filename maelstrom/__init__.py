@@ -11,6 +11,21 @@ np.random.seed(1000)
 
 __version__ = "0.1.0"
 
+def check_horovod():
+    """Check if we should run with horovod based on environment variables
+
+    Returns:
+        bool: True if we should run with horovod, False otherwise
+    """
+    # Program is run with horovodrun
+    with_horovod = "HOROVOD_RANK" in os.environ
+
+    if not with_horovod:
+        # Program is run with srun
+        with_horovod = "SLURM_STEP_NUM_TASKS" in os.environ and int(os.environ["SLURM_STEP_NUM_TASKS"]) > 1
+
+    return with_horovod
+
 
 def map_decorator1_to_1(func):
     """Decorator to wrap a 1-argument function as a tf.py_function"""
@@ -111,21 +126,6 @@ for the_loader, module_name, is_pkg in pkgutil.walk_packages(__path__):
     _module = the_loader.find_module(module_name).load_module(module_name)
     globals()[module_name] = _module
 
-
-def check_horovod():
-    """Check if we should run with horovod based on environment variables
-
-    Returns:
-        bool: True if we should run with horovod, False otherwise
-    """
-    # Program is run with horovodrun
-    with_horovod = "HOROVOD_RANK" in os.environ
-
-    if not with_horovod:
-        # Program is run with srun
-        with_horovod = "SLURM_STEP_NUM_TASKS" in os.environ and int(os.environ["SLURM_STEP_NUM_TASKS"]) > 1
-
-    return with_horovod
 
 def main():
     import maelstrom.__main__

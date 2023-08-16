@@ -12,6 +12,10 @@ import yaml
 
 import maelstrom
 
+with_horovod = maelstrom.check_horovod()
+if with_horovod:
+    import horovod.tensorflow as hvd
+
 class Loader:
     """Data loader class
 
