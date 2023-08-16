@@ -74,7 +74,7 @@ def main():
 
     config = maelstrom.merge_configs(args.config)
 
-    loader, loader_val, loader_test = get_loaders(config)
+    loader, loader_val, loader_test = get_loaders(config, with_horovod)
 
     if config["loss"]["type"] in ["mae_prob"] and loader.num_targets == 1:
         raise Exception(
