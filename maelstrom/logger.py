@@ -1,4 +1,5 @@
 import json
+import numpy as np
 
 import maelstrom
 
@@ -41,7 +42,7 @@ class Logger:
                 curr = curr[k]
 
     def __str__(self):
-        output = json.dumps(self.results, indent=4)
+        output = json.dumps(self.results, indent=4, cls=NpEncoder)
         return output
 
     def write(self):
@@ -49,3 +50,13 @@ class Logger:
         with open(self.filename, "w") as file:
             output = self.__str__()
             file.write(output)
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return json.JSONEncoder.default(self, obj)
