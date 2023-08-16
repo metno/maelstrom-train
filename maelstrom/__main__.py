@@ -110,14 +110,7 @@ def main():
 
     # Model training
     epochs = config["training"]["num_epochs"]
-
-    if with_horovod:
-        # print("SHARDING", hvd.size(), hvd.local_rank())
-        # dataset = dataset.shard(num_shards=hvd.size(), index=hvd.local_rank())
-        # print(type(dataset))
-        dataset = loader.get_dataset(True, repeat=epochs, shard_size=hvd.size(), shard_index=hvd.local_rank())
-    else:
-        dataset = loader.get_dataset(True, repeat=epochs)
+    dataset = loader.get_dataset(True, repeat=epochs)
 
     do_validation = loader_val is not None and loader_val != loader
     dataset_val = dataset
@@ -200,7 +193,7 @@ def main():
                 logger.add("Config", section.capitalize(), config[section])
 
     validation_frequency = get_validation_frequency(config, loader)
-    # print(f"validation frequency {validation_frequency}")
+    print(f"validation frequency: {validation_frequency} batches")
 
     # Set up callbacks
     callbacks = list()
@@ -215,20 +208,19 @@ def main():
 
     # This is the keras way of running validation. However, now we do validation via a
     # validation callback above instead.
-    keras_epochs = epochs
     kwargs = {}
-    if with_horovod:
-        keras_epochs = int(epochs * loader.num_batches // hvd.size() // (validation_frequency))
-        # TODO:
-        kwargs["steps_per_epoch"] = validation_frequency
-        kwargs["verbose"] = main_process
-    else:
-        keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
-        kwargs["steps_per_epoch"] = validation_frequency
-
     if do_validation:
-        kwargs["validation_data"] = dataset_val
         keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
+        if with_horovod:
+            kwargs["verbose"] = main_process
+        kwargs["steps_per_epoch"] = validation_frequency
+    else:
+        keras_epochs = epochs
+        kwargs["steps_per_epoch"] = loader.num_batches
+
+    # if do_validation:
+    #     kwargs["validation_data"] = dataset_val
+    #     keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
     # kwargs["verbose"] = main_process
     print("keras_epochs:", keras_epochs)
 
@@ -322,7 +314,6 @@ def get_loaders(config, with_horovod):
 
     Args:
         config (dict): Dictionary with configuration
-        with_horovod (bool): Deal with horovod?
 
     Returns:
         loader: Loader for training
@@ -564,7 +555,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
 
 
 def get_validation_frequency(config, loader):
-    validation_frequency = loader.num_batches_per_file
+    validation_frequency = loader.num_batches
     if "validation_frequency" in config["training"]:
         words = config["training"]["validation_frequency"].split(" ")
         if len(words) != 2:
