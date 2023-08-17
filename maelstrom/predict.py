@@ -43,7 +43,7 @@ def main():
     if "patch_size" in loader_config:
         del loader_config["patch_size"]
     loader_config["batch_size"] = 1
-    loader = maelstrom.loader.Loader.from_config(loader_config)
+    loader = maelstrom.loader.Loader.from_config(loader_config, False)
     dataset = loader.get_dataset()
 
     # Set up model
