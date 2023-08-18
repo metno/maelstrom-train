@@ -454,6 +454,7 @@ class Unet(Model):
         upsampling_type="upsampling",
         separable=False,
         with_leadtime=False,
+        batch_normalization=False,
     ):
         """U-net
 
@@ -475,6 +476,7 @@ class Unet(Model):
         self._with_leadtime = with_leadtime
         self._upsampling_type = upsampling_type
         self._separable = separable
+        self._batch_normalization = batch_normalization
 
         new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
 
@@ -493,8 +495,23 @@ class Unet(Model):
             hood_size = [self._conv_size, self._conv_size]
             up_pool_size = [self._pool_size, self._pool_size]
             up_hood_size = [1, self._conv_size, self._conv_size]
+            def Conv(output, features, hood_size, activation, batch_normalization):
+                for i in range(2):
+                    output = maelstrom.layers.SeparableConv3D(features, hood_size, padding="same")(output)
+                    if batch_normalization:
+                        output = keras.layers.BatchNormaliztion()(output)
+                    output = keras.layers.Activation(activation)(output)
+                return output
         else:
-            Conv = keras.layers.Conv3D
+            def Conv(output, features, hood_size, activation, batch_normalization):
+                for i in range(2):
+                    output = keras.layers.Conv3D(features, hood_size, padding="same")(output)
+                    if batch_normalization:
+                        output = keras.layers.BatchNormalization()(output)
+                        # Activation should be after batch normalization
+                    output = keras.layers.Activation(activation)(output)
+                return output
+
             pool_size = [1, self._pool_size, self._pool_size]
             hood_size = [1, self._conv_size, self._conv_size]
             up_pool_size = pool_size
@@ -503,12 +520,7 @@ class Unet(Model):
         # Downsampling
         # conv -> conv -> max_pool
         for i in range(self._levels - 1):
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
+            outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
             levels += [outputs]
             # print(i, outputs.shape)
 
@@ -516,12 +528,7 @@ class Unet(Model):
             features *= 2
 
         # conv -> conv
-        outputs = Conv(features, hood_size, activation="relu", padding="same")(
-            outputs
-        )
-        outputs = Conv(features, hood_size, activation="relu", padding="same")(
-            outputs
-        )
+        outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
         for i in range(self._levels - 2, -1, -1):
@@ -530,7 +537,7 @@ class Unet(Model):
             if self._upsampling_type == "upsampling":
                 # The original paper used this kind of upsampling
                 UpConv = keras.layers.UpSampling3D
-                outputs = Conv(features, up_pool_size, activation="relu", padding="same")(
+                outputs = keras.layers.Conv3D(features, up_pool_size, activation="relu", padding="same")(
                     outputs
                 )
                 outputs = UpConv(pool_size)(outputs)
@@ -541,12 +548,7 @@ class Unet(Model):
                 outputs = UpConv(features, up_hood_size, strides=pool_size, padding="same")(outputs)
 
             outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
-            outputs = Conv(features, hood_size, activation="relu", padding="same")(
-                outputs
-            )
+            outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
 
         # Dense layer at the end
         if self._with_leadtime:
