@@ -65,13 +65,29 @@ def get_learning_rate(args):
     if isinstance(args, dict):
         name = args["type"]
         name = name.lower()
-        curr_args = {k: v for k, v in args.items() if k not in ["type"]}
+        curr_args = {k: v for k, v in args.items() if k not in ["type", "cycle"]}
         if name == "exponential_decay":
             learning_rate = keras.optimizers.schedules.ExponentialDecay(**curr_args)
         elif name == "linear":
             learning_rate = LinearSchedule()
         elif name == "piecewise":
+            """
+            if "cycle" in args:
+                boundaries = [i for i in args["boundaries"]]
+                values = [i for i in args["values"]]
+                N = 200
+                for i in range((N-1) * len(values)):
+                    boundaries += [boundaries[-1] + args["cycle"]]
+                values = values * N
+                print(boundaries, values)
+            curr_args["boundaries"] = boundaries
+            curr_args["values"] = values
+            """
             learning_rate = keras.optimizers.schedules.PiecewiseConstantDecay(
+                **curr_args
+            )
+        elif name == "cosinedecayrestarts":
+            learning_rate = keras.optimizers.schedules.CosineDecayRestarts(
                 **curr_args
             )
         else:
