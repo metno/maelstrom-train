@@ -627,8 +627,6 @@ class Loader:
         Input: leadtime, patch, y, x, predictor
         Output: patch, leadtime, y, x, predictor
         """
-        if self.patch_size is None:
-            return predictors, targets
         s_time = time.time()
         with tf.device(self.device):
             p = tf.transpose(predictors, [1, 0, 2, 3, 4])
