@@ -192,7 +192,7 @@ def main():
             if section not in ["models"]:
                 logger.add("Config", section.capitalize(), config[section])
 
-    validation_frequency = get_validation_frequency(config, loader)
+    validation_frequency = get_validation_frequency(config, loader, with_horovod)
     print(f"validation frequency: {validation_frequency} batches")
 
     # Set up callbacks
@@ -554,7 +554,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
     return evaluators
 
 
-def get_validation_frequency(config, loader):
+def get_validation_frequency(config, loader, with_horovod):
     validation_frequency = loader.num_batches
     if "validation_frequency" in config["training"]:
         words = config["training"]["validation_frequency"].split(" ")
@@ -568,6 +568,12 @@ def get_validation_frequency(config, loader):
             validation_frequency = loader.num_batches * freq
         elif freq_units == "file":
             validation_frequency = loader.num_batches_per_file * freq
+            # The convept of "file" needs to be handled differently when horovod processes several
+            # files in parallel. The most intuitive would be that if we want validation every 36
+            # files, and 4 are run in parallel, we should validated every 9 files relative to one
+            # process's data loader.
+            if with_horovod:
+                validation_frequency //= hvd.size()
         elif freq_units == "batch":
             validation_frequency = freq
         else:
