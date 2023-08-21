@@ -771,6 +771,7 @@ class Loader:
         d["Num predictors"] = self.num_predictors
         d["Num targets fields"] = self.num_targets
         d["Batch size"] = self.batch_size
+        d["With leadtime dim"] = self.with_leadtime
 
         if self.patch_size is not None:
             d["Patch size"] = self.patch_size
