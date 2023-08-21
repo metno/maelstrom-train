@@ -783,8 +783,8 @@ class Loader:
 
         d["Total num batches"] = self.num_samples_per_file * self.num_files // self.batch_size
         d["Total num samples"] = self.num_samples_per_file * self.num_files
-        d["Sample size (MB)"] = self.size_gb() * 1024 / self.num_samples
-        d["Total size (GB)"] = self.size_gb()
+        d["Sample size (MB)"] = self.size_gb * 1024 / self.num_samples
+        d["Total size (GB)"] = self.size_gb
 
         d["Predictors"] = list()
         if self.predictor_names is not None:
@@ -843,6 +843,7 @@ class Loader:
         else:
             return feature["type"]
 
+    @property
     def size_gb(self):
         """Returns the number of bytes needed to store the full dataset"""
         size_bytes = np.product(self.predictor_shape) * 4

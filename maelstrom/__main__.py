@@ -72,6 +72,11 @@ def main():
                 )
             print("Current rank", hvd.local_rank())
 
+    if with_horovod:
+        num_processes = hvd.size()
+    else:
+        num_processes = 1
+
     config = maelstrom.merge_configs(args.config)
 
     loader, loader_val, loader_test = get_loaders(config, with_horovod)
@@ -241,16 +246,39 @@ def main():
         print(f"Loading weights from {input_checkpoint_filepath}")
         model.load_weights(input_checkpoint_filepath).expect_partial()
 
+    print("\nRun configuration:")
+    print(f"   Training size: {loader.size_gb * num_processes:.2f} GB")
+    print(f"   Number of processes: {num_processes}")
+    print(f"   Batch size: {loader.batch_size}")
+    print(f"   Patch size: {loader.patch_size}")
+    print(f"   Epochs: {epochs}")
+    print(f"   Validation frequency: {validation_frequency}")
+    # TODO: Put dataset information and run information
+
+    print("\nModel configuration:")
+    print(f"   Model name: {model_name}")
+    for k,v in model_config.items():
+        print(f"   {k}: {v}")
+
     if args.do_train:
         print("\n### Training ###")
         maelstrom.util.print_memory_usage()
         history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
                 **kwargs)
-        print("Training results")
-        print(f"   Training time: {time.time() - start_time}")
+        print("\nTraining results")
+        training_time = time.time() - start_time
+        print(f"   Training time: {training_time:.2f} s")
+        print(f"   Training time per epoch: {training_time / epochs:.2f} s")
+        performance = loader.size_gb * num_processes / training_time / epochs
+        print(f"   Training performance: {performance:.2f} GB/s")
+
+        loss = history.history["loss"]
+        print(f"   Last loss: {loss[-1]:.2f}")
+        print(f"   Best loss: {np.min(loss):.2f}")
+
         val_loss = history.history["val_loss"]
-        print( "   Last validation loss: ", val_loss[-1])
-        print( "   Best validation loss: ", np.min(val_loss))
+        print(f"   Last val loss: {val_loss[-1]:.2f}")
+        print(f"   Best val loss: {np.min(val_loss):.2f}")
 
         # TODO: Enable this
         # if main_process:
@@ -276,7 +304,10 @@ def main():
             logger.add("Timing", "Testing", "total_time", time.time() - s_time)
             for k, v in eval_results.items():
                 logger.add("Scores", k, v)
-            print(eval_results)
+            test_loss = eval_results["test_loss"]
+            print("Testing results")
+            print(f"   Test time: {time.time() - s_time:.2f} s")
+            print(f"   Test loss: {test_loss:.2f}")
             maelstrom.util.print_memory_usage()
 
         # Write loader statistics
@@ -312,6 +343,7 @@ def main():
         logger.add("Timing", "End time", int(time.time()))
         logger.add("Timing", "Total", time.time() - s_time)
         logger.write()
+        print("   Total runtime:", time.time() - s_time)
 
 
 def get_loaders(config, with_horovod):
@@ -523,7 +555,6 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
         dataset = loader.get_dataset(1, 1)
 
         trainer.predict(dataset, callbacks=callbacks)
-    print("Total time", time.time() - s_time)
     return results
 
 
