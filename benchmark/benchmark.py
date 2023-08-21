@@ -410,6 +410,8 @@ class Ap1Loader:
 
         # cache=False seems to have no effect
         self.data = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time") # , cache=False)
+        # Don't subset in this way, since it is highly inefficient
+        # self.data = self.data.isel(x=range(1, 1790), y=range(1, 2310))
 
         # Used to store the time it takes for each processing step
         self.timing = collections.defaultdict(lambda: 0)
@@ -591,6 +593,11 @@ class Ap1Loader:
         s_time = time.time()
         self.print("Start processing")
         with tf.device(self.device):
+            # A more efficient way to subset spatially
+            # predictors = predictors[:, 1:2310, 1:1790, ...]
+            # static_predictors = static_predictors[1:2310, 1:1790, ...]
+            # targets = targets[:, 1:2310, 1:1790, ...]
+
             shape = [predictors.shape[0], 1, 1, 1]
             static_predictors = tf.expand_dims(static_predictors, 0)
             static_predictors = tf.tile(static_predictors, shape)
