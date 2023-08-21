@@ -34,7 +34,7 @@ class Loader:
         patch_size=None,
         predict_diff=False,
         batch_size=1,
-        cache=False,
+        filename_validation_cache=None,
         num_parallel_calls=None,
         extra_features=[],
         quick_metadata=True,
@@ -57,7 +57,7 @@ class Loader:
             patch_size (int): Patch the data with a stencil of this width (pixels)
             predict_diff (bool): Change the prediction problem to estimate the forecast bias
             batch_size (int): Number of samples to use per batch
-            cache (bool): Cache data in memory (before moving to GPU)
+            filename_validation_cache (str): Cache validation data in this file
             num_parallel_calls (int): Number of threads to use for each pipeline stage
             extra_features (dict): Configuration of extra features to generate
             quick_metadata (bool): Deduce date metadata from filename, instead of reading the file
@@ -75,7 +75,7 @@ class Loader:
         self.patch_size = patch_size
         self.predict_diff = predict_diff
         self.batch_size = batch_size
-        self.cache = cache
+        self.filename_validation_cache = filename_validation_cache
         self.filename_normalization = normalization
         self.create_fake_data = create_fake_data
         self.num_parallel_calls = num_parallel_calls
@@ -91,6 +91,10 @@ class Loader:
                 raise ValueError("y_range must be a 2-vector (start,stop)")
         elif not (self.x_range is None and self.y_range is None):
             raise ValueError("Either both or none of x_range and y_range must be provided")
+
+        if self.filename_validation_cache is not None:
+            if os.path.exists(self.filename_validation_cache):
+                os.remove(self.filename_validation_cache)
 
         self.filenames = list()
         for f in filenames:
@@ -251,8 +255,8 @@ class Loader:
 
         dataset = dataset.batch(self.batch_size)
 
-        # if self.filename_cache is not None:
-        #     dataset = dataset.cache(self.filename_cache)
+        if self.filename_validation_cache is not None:
+            dataset = dataset.cache(self.filename_validation_cache)
 
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
