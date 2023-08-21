@@ -492,20 +492,20 @@ class Unet(Model):
             Conv = maelstrom.layers.DepthwiseConv2D
             Conv = maelstrom.layers.SeparableConv2D
             pool_size = [1, self._pool_size, self._pool_size]
-            hood_size = [self._conv_size, self._conv_size]
+            conv_size = [self._conv_size, self._conv_size]
             up_pool_size = [self._pool_size, self._pool_size]
-            up_hood_size = [1, self._conv_size, self._conv_size]
-            def Conv(output, features, hood_size, activation, batch_normalization):
+            up_conv_size = [1, self._conv_size, self._conv_size]
+            def Conv(output, features, conv_size, activation, batch_normalization):
                 for i in range(2):
-                    output = maelstrom.layers.SeparableConv3D(features, hood_size, padding="same")(output)
+                    output = maelstrom.layers.SeparableConv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormaliztion()(output)
                     output = keras.layers.Activation(activation)(output)
                 return output
         else:
-            def Conv(output, features, hood_size, activation, batch_normalization):
+            def Conv(output, features, conv_size, activation, batch_normalization):
                 for i in range(2):
-                    output = keras.layers.Conv3D(features, hood_size, padding="same")(output)
+                    output = keras.layers.Conv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormalization()(output)
                         # Activation should be after batch normalization
@@ -513,14 +513,14 @@ class Unet(Model):
                 return output
 
             pool_size = [1, self._pool_size, self._pool_size]
-            hood_size = [1, self._conv_size, self._conv_size]
+            conv_size = [1, self._conv_size, self._conv_size]
             up_pool_size = pool_size
-            up_hood_size = hood_size
+            up_conv_size = conv_size
 
         # Downsampling
         # conv -> conv -> max_pool
         for i in range(self._levels - 1):
-            outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
             levels += [outputs]
             # print(i, outputs.shape)
 
@@ -528,7 +528,7 @@ class Unet(Model):
             features *= 2
 
         # conv -> conv
-        outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
+        outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
         for i in range(self._levels - 2, -1, -1):
@@ -545,10 +545,10 @@ class Unet(Model):
                 # Some use this kind of upsampling. This seems to create a checkered pattern in the
                 # output, at least for me.
                 UpConv = keras.layers.Conv3DTranspose
-                outputs = UpConv(features, up_hood_size, strides=pool_size, padding="same")(outputs)
+                outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
 
             outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
-            outputs = Conv(outputs, features, hood_size, "relu", self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
 
         # Dense layer at the end
         if self._with_leadtime:
