@@ -50,8 +50,8 @@ class Loader:
             filenames (list): List of netCDF files to load
             limit_leadtimes (list): Only retrieve these leadtimes
             limit_predictors (list): Only retrieve these predictor names
-            x_range (list): Only retrieve these x-axis indices
-            y_range (list): Only retrieve these y-axis indices
+            x_range (list): Only retrieve these x-axis indices (start, stop) (python range)
+            y_range (list): Only retrieve these y-axis indices (start, stop) (python range)
             probabilistic_target (bool): Load both target mean and uncertainty
             normalization (str): Filename with normalization data
             patch_size (int): Patch the data with a stencil of this width (pixels)
@@ -71,8 +71,6 @@ class Loader:
         self.extra_features = extra_features
         self.limit_predictors = limit_predictors
         self.limit_leadtimes = limit_leadtimes
-        self.x_range = x_range
-        self.y_range = y_range
         self.with_leadtime = with_leadtime
         self.patch_size = patch_size
         self.predict_diff = predict_diff
@@ -83,6 +81,16 @@ class Loader:
         self.num_parallel_calls = num_parallel_calls
         self.probabilistic_target = probabilistic_target
         self.with_horovod = with_horovod
+
+        self.x_range = x_range
+        self.y_range = y_range
+        if self.x_range is not None and self.y_range is not None:
+            if len(self.x_range) != 2:
+                raise ValueError("x_range must be a 2-vector (start,stop)")
+            if len(self.y_range) != 2:
+                raise ValueError("y_range must be a 2-vector (start,stop)")
+        elif not (self.x_range is None and self.y_range is None):
+            raise ValueError("Either both or none of x_range and y_range must be provided")
 
         self.filenames = list()
         for f in filenames:
@@ -130,7 +138,7 @@ class Loader:
         """Returns a Loader object based on a configuration dictionary"""
         kwargs = {k:v for k,v in config.items() if k != "type"}
         kwargs["with_horovod"] = with_horovod
-        range_variables = ["x_range", "y_range", "limit_leadtimes"]
+        range_variables = ["limit_leadtimes"]
 
         # Process value arguments
         for range_variable in range_variables:
@@ -428,13 +436,18 @@ class Loader:
 
     @maelstrom.map_decorator3_to_3
     def expand_static_predictors(self, predictors, static_predictors, targets):
-        """Copies static predictors to leadtime dimension"""
+        """Copies static predictors to leadtime dimension. Also subsets spatially."""
         s_time = time.time()
         self.print("Start processing")
         with tf.device(self.device):
+            if self.x_range is not None and self.y_range is not None:
+                predictors = predictors[:, self.y_range[0]:self.y_range[-1], self.x_range[0]:self.x_range[-1], ...]
+                static_predictors = static_predictors[self.y_range[0]:self.y_range[-1], self.x_range[0]:self.x_range[-1], ...]
+                targets = targets[:, self.y_range[0]:self.y_range[-1], self.x_range[0]:self.x_range[-1], ...]
             shape = [predictors.shape[0], 1, 1, 1]
             static_predictors = tf.expand_dims(static_predictors, 0)
             static_predictors = tf.tile(static_predictors, shape)
+
         self.timing["expand"] += time.time() - s_time
         return predictors, static_predictors, targets
 
@@ -705,10 +718,13 @@ class Loader:
                 limit["leadtime"] = [dataset.leadtime[i] for i in leadtime_indices]
             else:
                 limit["leadtime"] = leadtime_indices
-        if self.x_range is not None:
-            limit["x"] = self.x_range
-        if self.y_range is not None:
-            limit["y"] = self.y_range
+
+        # Subsetting x and y makes data loading too slow. It is better to subset after the data has
+        # been loaded.
+        # if self.x_range is not None:
+        #     limit["x"] = self.x_range
+        # if self.y_range is not None:
+        #     limit["y"] = self.y_range
         return limit
 
     def load_metadata(self, dataset):
@@ -719,8 +735,12 @@ class Loader:
             self.times = np.array([self.times])
         # if self.limit_leadtimes is not None:
         #     self.leadtimes = [dataset.leadtime[i] for i in self.limit_leadtimes]
-        self.num_x_input = len(dataset.x)
-        self.num_y_input = len(dataset.y)
+        if self.x_range is not None and self.y_range is not None:
+            self.num_x_input = self.x_range[1] - self.x_range[0]
+            self.num_y_input = self.y_range[1] - self.y_range[0]
+        else:
+            self.num_x_input = len(dataset.x)
+            self.num_y_input = len(dataset.y)
         if self.patch_size is not None:
             if self.patch_size > self.num_x_input:
                 raise ValueError("Patch size too small")
