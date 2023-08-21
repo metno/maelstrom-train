@@ -64,8 +64,8 @@ loader_validation:
     probabilistic_target: True
     debug: False
     cache: True
-    x_range: 300:1068
-    y_range: 550:1062
+    x_range: [300,1068]
+    y_range: [550,1062]
     extra_features:
         - type: leadtime
         - type: x
