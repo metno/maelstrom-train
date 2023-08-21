@@ -246,7 +246,12 @@ def main():
         maelstrom.util.print_memory_usage()
         history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
                 **kwargs)
-        print(f"Training time: {time.time() - start_time}")
+        print("Training results")
+        print(f"   Training time: {time.time() - start_time}")
+        val_loss = history.history["val_loss"]
+        print( "   Last validation loss: ", val_loss[-1])
+        print( "   Best validation loss: ", np.min(val_loss))
+
         # TODO: Enable this
         # if main_process:
         #     model.load_weights(checkpoint_filepath)
