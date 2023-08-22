@@ -438,7 +438,7 @@ class Loader:
         # print(predictors.shape, static_predictors.shape, targets.shape)
         return predictors, static_predictors, targets
 
-    @maelstrom.map_decorator3_to_3
+    @maelstrom.map_decorator3_to_4
     def expand_static_predictors(self, predictors, static_predictors, targets):
         """Copies static predictors to leadtime dimension. Also subsets spatially."""
         s_time = time.time()
@@ -453,10 +453,11 @@ class Loader:
             static_predictors = tf.tile(static_predictors, shape)
 
         self.timing["expand"] += time.time() - s_time
-        return predictors, static_predictors, targets
+        leadtimes = self.leadtimes
+        return predictors, static_predictors, targets, leadtimes
 
-    @maelstrom.map_decorator3_to_2
-    def feature_extraction(self, predictors, static_predictors, targets):
+    @maelstrom.map_decorator4_to_2
+    def feature_extraction(self, predictors, static_predictors, targets, leadtimes):
         """Extract features and append to predictors and merge in static predictors
 
         Input: leadtime, y, x, predictor
@@ -475,7 +476,7 @@ class Loader:
                     x = tf.range(shape[1], dtype=tf.float32)
                     curr = self.broadcast(x, shape, 1)
                 elif feature_type == "leadtime":
-                    x = tf.range(shape[0], dtype=tf.float32)
+                    x = leadtimes
                     curr = self.broadcast(x, shape, 0)
                 curr = tf.expand_dims(curr, -1)
                 features += [curr]
@@ -831,7 +832,7 @@ class Loader:
                 val = np.arange(Y)
                 curr = [np.mean(val), np.std(val)]
             elif feature_type == "leadtime":
-                val = np.arange(self.num_leadtimes)
+                val = self.leadtimes
                 curr = [np.mean(val), np.std(val)]
 
             normalization[feature_name] = curr

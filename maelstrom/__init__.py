@@ -77,6 +77,26 @@ def map_decorator3_to_3(func):
                 )
     return wrapper
 
+def map_decorator3_to_4(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j, k):
+        return tf.py_function(
+                lambda i, j, k: func(self, i, j, k),
+                inp=(i, j, k),
+                Tout=(tf.float32, tf.float32, tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator4_to_2(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j, k, l):
+        return tf.py_function(
+                lambda i, j, k, l: func(self, i, j, k, l),
+                inp=(i, j, k, l),
+                Tout=(tf.float32, tf.float32)
+                )
+    return wrapper
+
 def load_yaml(filename):
     """Load yaml from file and return dictionary
 
