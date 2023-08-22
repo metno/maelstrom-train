@@ -36,6 +36,10 @@ def get(name, args, logger=None, model=None, output_folder=None):
         return Convergence(**args)
     elif name == "timing":
         return Timing(logger)
+    elif name == "weights":
+        filename = args["filename"]
+        filename = f"{output_folder}/{filename}"
+        return WeightsCallback(model, filename)
     elif name == "checkpoint":
         checkpoint_metric = 'val_loss'
 
@@ -68,6 +72,7 @@ def get_default(logger, model, output_folder):
     callbacks += [get("checkpoint", {}, output_folder=output_folder)]
     callbacks += [get("timing", {}, logger=logger)]
     callbacks += [get("convergence", {"filename": "loss.txt"}, output_folder=output_folder)]
+    # callbacks += [get("weights", {"filename": "weights.txt"}, model=model, output_folder=output_folder)]
     return callbacks
 
 class WeightsCallback(tf.keras.callbacks.Callback):
@@ -125,6 +130,7 @@ class WeightsCallback(tf.keras.callbacks.Callback):
         if len(curr) > 0:
             # curr can have length 0 if there are no traininable parameters
             self.curr_batch_weights += [np.concatenate(curr)]
+        # print(np.concatenate(curr))
 
         # print(self.model.layers[0].get_weights())
         # weights = np.squeeze(self.model.layers[0].get_weights())
