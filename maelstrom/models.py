@@ -448,7 +448,7 @@ class Unet(Model):
         input_shape,
         num_outputs,
         features=16,
-        levels=3,
+        layers=3,
         pool_size=2,
         conv_size=3,
         upsampling_type="upsampling",
@@ -460,7 +460,7 @@ class Unet(Model):
 
         Args:
             features (int): Number of features in the first layer
-            levels (int): Depth of the U-net
+            layers (int): Depth of the U-net
             pool_size (int): Pooling ratio (> 0)
             upsampling_type (str): One of "upsampling" or "conv_transpose"
             conv_size (int): Convolution size (> 0)
@@ -470,7 +470,7 @@ class Unet(Model):
             raise ValueError(f"Unknown upsampling type {upsampling_type}")
 
         self._features = features
-        self._levels = levels
+        self._layers = layers
         self._pool_size = pool_size
         self._conv_size = conv_size
         self._with_leadtime = with_leadtime
@@ -484,7 +484,7 @@ class Unet(Model):
 
     def get_outputs(self, inputs):
         outputs = inputs
-        levels = list()
+        layers = list()
 
         features = self._features
 
@@ -519,9 +519,9 @@ class Unet(Model):
 
         # Downsampling
         # conv -> conv -> max_pool
-        for i in range(self._levels - 1):
+        for i in range(self._layers - 1):
             outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
-            levels += [outputs]
+            layers += [outputs]
             # print(i, outputs.shape)
 
             outputs = keras.layers.MaxPooling3D(pool_size=pool_size)(outputs)
@@ -531,7 +531,7 @@ class Unet(Model):
         outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
-        for i in range(self._levels - 2, -1, -1):
+        for i in range(self._layers - 2, -1, -1):
             features /= 2
             # Upsampling
             if self._upsampling_type == "upsampling":
@@ -547,7 +547,7 @@ class Unet(Model):
                 UpConv = keras.layers.Conv3DTranspose
                 outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
 
-            outputs = keras.layers.concatenate((levels[i], outputs), axis=-1)
+            outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
             outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
 
         # Dense layer at the end
