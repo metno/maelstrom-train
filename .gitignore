@@ -22,3 +22,6 @@ dataA
 log
 deps*
 .venv*
+python-*
+*.sh
+logs
