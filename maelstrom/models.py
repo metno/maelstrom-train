@@ -177,7 +177,7 @@ class BasicBenchmark(Model):
         input_shape,
         num_outputs,
         filter_sizes=[1024, 256, 256],
-        neighbourhood_size=1,
+        conv_size=1,
         time_size=1,
         hidden_layer_activation="relu",
         last_layer_activation="linear",
@@ -187,7 +187,7 @@ class BasicBenchmark(Model):
         separable=False,
     ):
         self._filter_sizes = filter_sizes
-        self._neighbourhood_size = neighbourhood_size
+        self._conv_size = conv_size
         self._time_size = time_size
         self._hidden_layer_activation = hidden_layer_activation
         self._last_layer_activation = last_layer_activation
@@ -209,7 +209,7 @@ class BasicBenchmark(Model):
             # way around. This only works on GPUs.
             num_leadtimes = input_shape[0]
             filter_sizes = [size // num_leadtimes * num_leadtimes for size in filter_sizes]
-            conv_size = [neighbourhood_size, neighbourhood_size]
+            conv_size = [conv_size, conv_size]
             reshape = (input_shape[1], input_shape[2], input_shape[0] * input_shape[3])
             layers += [keras.layers.Reshape(reshape, input_shape=input_shape)]
             for size in filter_sizes:
@@ -225,22 +225,22 @@ class BasicBenchmark(Model):
             if self._separable:
                 func = maelstrom.layers.SeparableConv2D
                 conv_size = [
-                    self._neighbourhood_size,
-                    self._neighbourhood_size,
+                    self._conv_size,
+                    self._conv_size,
                 ]
             else:
                 func = keras.layers.Conv3D
                 conv_size = [
                     self._time_size,
-                    self._neighbourhood_size,
-                    self._neighbourhood_size,
+                    self._conv_size,
+                    self._conv_size,
                 ]
         else:
             if self._separable:
                 func = keras.layers.SeparableConv2D
             else:
                 func = keras.layers.Conv2D
-            conv_size = [self._neighbourhood_size, self._neighbourhood_size]
+            conv_size = [self._conv_size, self._conv_size]
         for size in self._filter_sizes:
             layers += [
                 func(
@@ -297,12 +297,12 @@ class Lstm(Model):
         input_shape,
         num_outputs,
         filter_sizes=[1024, 256, 256],
-        neighbourhood_size=1,
+        conv_size=1,
         hidden_layer_activation="relu",
         last_layer_activation="linear",
     ):
         self._filter_sizes = filter_sizes
-        self._neighbourhood_size = neighbourhood_size
+        self._conv_size = conv_size
         self._hidden_layer_activation = hidden_layer_activation
         self._last_layer_activation = last_layer_activation
 
@@ -312,7 +312,7 @@ class Lstm(Model):
 
     def get_layers(self):
         layers = list()
-        conv_size = [self._neighbourhood_size, self._neighbourhood_size]
+        conv_size = [self._conv_size, self._conv_size]
         # for i in range(3):
         #     layers += [keras.layers.Dense(6, activation=self._hidden_layer_activation)]
         for size in self._filter_sizes:
