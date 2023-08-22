@@ -280,6 +280,7 @@ def main():
             print(f"   Last loss: {loss[-1]:.2f}")
             print(f"   Best loss: {np.min(loss):.2f}")
 
+        if "val_loss" in history.history:
             val_loss = history.history["val_loss"]
             print(f"   Last val loss: {val_loss[-1]:.2f}")
             print(f"   Best val loss: {np.min(val_loss):.2f}")
