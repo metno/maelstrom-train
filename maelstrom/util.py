@@ -199,6 +199,37 @@ def get_max_memory_usage():
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1000
 
 
+def print_gpu_usage(message="", show_line=False):
+    try:
+        usage = tf.config.experimental.get_memory_info("GPU:0")
+        output = message + ' - '.join([f"{k}: {v / 1024**3:.2f} GB" for k,v in usage.items()])
+    except ValueError as e:
+        output = message + ' None'
+
+    if show_line:
+        frameinfo = inspect.getouterframes(inspect.currentframe())[1]
+        output += " (%s:%s)" % (frameinfo.filename, frameinfo.lineno)
+
+    print(output)
+
+def print_cpu_usage(message="", show_line=False):
+    """Prints the current and maximum memory useage of this process
+    Args:
+        message (str): Prepend with this message
+        show_line (bool): Add the file and line number making this call at the end of message
+    """
+
+    output = "current: %.2f GB - peak: %.2f GB" % (
+        get_memory_usage() / 1024 ** 3,
+        get_max_memory_usage() / 1024 ** 3,
+    )
+    output = message + output
+    if show_line:
+        frameinfo = inspect.getouterframes(inspect.currentframe())[1]
+        output += " (%s:%s)" % (frameinfo.filename, frameinfo.lineno)
+
+    print(output)
+
 def print_memory_usage(message=None, show_line=False):
     """Prints the current and maximum memory useage of this process
     Args:

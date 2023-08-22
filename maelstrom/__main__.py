@@ -198,7 +198,8 @@ def main():
                 logger.add("Config", section.capitalize(), config[section])
 
     validation_frequency = get_validation_frequency(config, loader, with_horovod)
-    print(f"validation frequency: {validation_frequency} batches")
+    if main_process:
+        print(f"validation frequency: {validation_frequency} batches")
 
     # Set up callbacks
     callbacks = list()
@@ -227,7 +228,8 @@ def main():
     # if do_validation:
     #     keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
     # kwargs["verbose"] = main_process
-    print("keras_epochs:", keras_epochs)
+    if main_process:
+        print("keras_epochs:", keras_epochs)
 
     if main_process:
         logger.add("Timing", "Training", "Start_time", int(time.time()))
@@ -246,39 +248,41 @@ def main():
         print(f"Loading weights from {input_checkpoint_filepath}")
         model.load_weights(input_checkpoint_filepath).expect_partial()
 
-    print("\nRun configuration:")
-    print(f"   Training size: {loader.size_gb * num_processes:.2f} GB")
-    print(f"   Number of processes: {num_processes}")
-    print(f"   Batch size: {loader.batch_size}")
-    print(f"   Patch size: {loader.patch_size}")
-    print(f"   Epochs: {epochs}")
-    print(f"   Validation frequency: {validation_frequency}")
-    # TODO: Put dataset information and run information
+    if main_process:
+        print("\nRun configuration:")
+        print(f"   Training size: {loader.size_gb * num_processes:.2f} GB")
+        print(f"   Number of processes: {num_processes}")
+        print(f"   Batch size: {loader.batch_size}")
+        print(f"   Patch size: {loader.patch_size}")
+        print(f"   Epochs: {epochs}")
+        print(f"   Validation frequency: {validation_frequency} batches")
+        # TODO: Put dataset information and run information
 
-    print("\nModel configuration:")
-    print(f"   Model name: {model_name}")
-    for k,v in model_config.items():
-        print(f"   {k}: {v}")
+        print("\nModel configuration:")
+        print(f"   Model name: {model_name}")
+        for k,v in model_config.items():
+            print(f"   {k}: {v}")
 
     if args.do_train:
         print("\n### Training ###")
         maelstrom.util.print_memory_usage()
         history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
                 **kwargs)
-        print("\nTraining results")
-        training_time = time.time() - start_time
-        print(f"   Training time: {training_time:.2f} s")
-        print(f"   Training time per epoch: {training_time / epochs:.2f} s")
-        performance = loader.size_gb * num_processes / training_time / epochs
-        print(f"   Training performance: {performance:.2f} GB/s")
+        if main_process:
+            print("\nTraining results")
+            training_time = time.time() - start_time
+            print(f"   Training time: {training_time:.2f} s")
+            print(f"   Training time per epoch: {training_time / epochs:.2f} s")
+            performance = loader.size_gb * num_processes / (training_time / epochs)
+            print(f"   Training performance: {performance:.2f} GB/s")
 
-        loss = history.history["loss"]
-        print(f"   Last loss: {loss[-1]:.2f}")
-        print(f"   Best loss: {np.min(loss):.2f}")
+            loss = history.history["loss"]
+            print(f"   Last loss: {loss[-1]:.2f}")
+            print(f"   Best loss: {np.min(loss):.2f}")
 
-        val_loss = history.history["val_loss"]
-        print(f"   Last val loss: {val_loss[-1]:.2f}")
-        print(f"   Best val loss: {np.min(val_loss):.2f}")
+            val_loss = history.history["val_loss"]
+            print(f"   Last val loss: {val_loss[-1]:.2f}")
+            print(f"   Best val loss: {np.min(val_loss):.2f}")
 
         # TODO: Enable this
         # if main_process:
@@ -343,7 +347,10 @@ def main():
         logger.add("Timing", "End time", int(time.time()))
         logger.add("Timing", "Total", time.time() - s_time)
         logger.write()
-        print("   Total runtime:", time.time() - s_time)
+        total_time = time.time() - s_time
+        print(f"   Total runtime: {total_runtime:.2f} s")
+        print_gpu_usage("   Final GPU memory: ")
+        print_cpu_usage("   Final CPU memory: ")
 
 
 def get_loaders(config, with_horovod):
