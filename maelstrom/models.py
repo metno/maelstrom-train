@@ -263,13 +263,14 @@ class BasicBenchmark(Model):
 class Regression(Model):
     """Simple linear regression model"""
 
-    def __init__(self, input_shape, num_outputs):
+    def __init__(self, input_shape, num_outputs, use_bias=True):
         new_input_shape = get_input_size(input_shape, False, False)
+        self._use_bias = use_bias
         super().__init__(new_input_shape, num_outputs)
 
     def get_layers(self):
         layers = list()
-        layers += [keras.layers.Dense(self._num_outputs, activation="linear")]
+        layers += [keras.layers.Dense(self._num_outputs, activation="linear"), use_bias=self._use_bias)]
         return layers
 
 
