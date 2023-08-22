@@ -270,7 +270,7 @@ class Regression(Model):
 
     def get_layers(self):
         layers = list()
-        layers += [keras.layers.Dense(self._num_outputs, activation="linear"), use_bias=self._use_bias)]
+        layers += [keras.layers.Dense(self._num_outputs, activation="linear", use_bias=self._use_bias)]
         return layers
 
 
@@ -597,6 +597,49 @@ class Dense(Model):
             keras.layers.Dense(self._num_outputs, activation=self._final_activation)
         ]
         return layers
+
+
+class Epic(Model):
+    """"""
+
+    def __init__(
+        self,
+        input_shape,
+        num_outputs,
+        activation="relu",
+        final_activation="linear",
+    ):
+        """
+        Args:
+            activation (str): Activation function between layers
+            final_activation (str): Activation function for output layer
+        """
+        new_input_shape = get_input_size(input_shape, False, False)
+        self._activation = activation
+        self._final_activation = final_activation
+        super().__init__(new_input_shape, num_outputs)
+
+    def get_outputs(self, inputs):
+        outputs = inputs
+        levels = list()
+
+        features = self._features
+
+        # Smoothing
+        conv_size = [1, self._conv_size, self._conv_size]
+        temp = list()
+        temp += [inputs]
+        for i in range(num_levels):
+            outputs = keras.layers.Conv3D(features, conv_size, acitivation="relu", padding="same")(outputs)
+            outputs = keras.layers.AveragePooling3D(pool_size=pool_size, padding="same")(outputs)
+            temp += [outputs]
+
+        outputs = tf.concatenate(temp, axis=-1)
+        for i in range(3):
+            outputs = keras.layers.Dense(features, activation="relu")(outputs)
+        outputs = keras.layers.Dense(self._num_outputs, activation="linear")
+
+        return outputs
 
 
 class Custom(Model):
