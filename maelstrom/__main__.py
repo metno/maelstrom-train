@@ -318,7 +318,10 @@ def main():
             )
             """
             logger.add("Timing", "Testing", "total_time", time.time() - s_time)
-            test_loss = history[0]
+            if maelstrom.util.is_list(history):
+                test_loss = history[0]
+            else:
+                test_loss = history
             # for k, v in eval_results.items():
             #     logger.add("Scores", k, v)
             # test_loss = eval_results["test_loss"]
