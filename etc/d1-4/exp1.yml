@@ -14,14 +14,15 @@ training:
             # first_decay_steps: 6000
             # t_mul: 1.0
             # m_mul: 1.0
-    num_epochs: 5
-    validation_frequency: 1 epoch # 36 file
+    num_epochs: 1
+    # validation_frequency: 1 epoch
+    validation_frequency: 36 file
 loader:
     type: file
     # filenames: [ "data/air_temperature/5TB/20200301T*Z.nc"]  # One file
     # filenames: [ "data/air_temperature/5TB/2020*1T*Z.nc"]    # 36 files
-    filenames: [ "data/air_temperature/5TB/202*01T*Z.nc"]    # 24 files
-    # filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20210[12]*T*Z.nc"]
+    # filenames: [ "data/air_temperature/5TB/202*01T*Z.nc"]    # 24 files
+    filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20210[12]*T*Z.nc"]
     normalization: data/air_temperature/normalization.yml
     predict_diff: True
     patch_size: 512
@@ -35,7 +36,6 @@ loader:
         - type: y
 loader_validation:
     type: file
-    # filenames: [ "data/air_temperature/5TB/2021030[12]T*Z.nc"]
     filenames: ["data/air_temperature/5TB/20210301T*Z.nc",
                 "data/air_temperature/5TB/20210402T*Z.nc",
                 "data/air_temperature/5TB/20210501T*Z.nc",
@@ -65,6 +65,27 @@ loader_validation:
         - type: leadtime
         - type: x
         - type: y
+loader_test:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
+                "data/air_temperature/5TB/20211*T*Z.nc",
+                "data/air_temperature/5TB/2022*T*Z.nc"]
+    normalization: data/air_temperature/normalization.yml
+    # patch_size: 512
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    # filename_validation_cache: data/air_temperature/validation_cache
+    x_range: [300,1068]
+    y_range: [550,1062]
+    # x_range: [215, 1751]
+    # y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
 models:
     - type: BasicBenchmark
       name: cnn
@@ -73,23 +94,34 @@ models:
       filter_sizes: [12, 5, 5]
     - type: Unet
       name: unet_f16_l6_c3_p2
-      levels: 6
       features: 16
+      layers: 6
       conv_size: 3
       pool_size: 2
-      # separable: True
-      # batch_normalization: True
     - type: Unet
-      name: unet_f16_l6_c1_p4
-      levels: 3
+      name: unet_f16_l6_c1_p2
       features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+    - type: Unet
+      name: unet_f16_l3_c3_p4
+      features: 16
+      layers: 3
+      conv_size: 3
+      pool_size: 4
+    - type: Unet
+      name: unet_f16_l3_c1_p4
+      features: 16
+      layers: 3
       conv_size: 1
       pool_size: 4
       # separable: True
       # batch_normalization: True
-    - type: dense
-      layers: 6
+    - type: Dense
+      name: dense_f12_l6
       features: 12
+      layers: 6
       activation: "relu"
 output:
     quantiles: [0.1, 0.5, 0.9]
