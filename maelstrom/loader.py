@@ -25,6 +25,7 @@ class Loader:
     def __init__(
         self,
         filenames,
+        omit_filenames=[],
         limit_leadtimes=None,
         limit_predictors=None,
         x_range=None,
@@ -99,6 +100,7 @@ class Loader:
         self.filenames = list()
         for f in filenames:
             self.filenames += glob.glob(f)
+        self.filenames = [f for f in self.filenames if f not in omit_filenames]
 
         if self.with_horovod:
             if len(self.filenames) == 0:
