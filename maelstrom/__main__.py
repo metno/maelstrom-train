@@ -9,6 +9,7 @@ import sys
 import time
 import math
 import tqdm
+import socket
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
@@ -256,6 +257,7 @@ def main():
         print(f"   Patch size: {loader.patch_size}")
         print(f"   Epochs: {epochs}")
         print(f"   Validation frequency: {validation_frequency} batches")
+        print(f"   Hostname: {socket.gethostname()}")
         # TODO: Put dataset information and run information
 
         print("\nModel configuration:")
