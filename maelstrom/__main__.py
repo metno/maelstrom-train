@@ -252,12 +252,15 @@ def main():
     if main_process:
         print("\nRun configuration:")
         print(f"   Training size: {loader.size_gb * num_processes:.2f} GB")
+        if do_validation:
+            print(f"   Validation size: {loader_val.size_gb * num_processes:.2f} GB")
         print(f"   Number of processes: {num_processes}")
         print(f"   Batch size: {loader.batch_size}")
         print(f"   Patch size: {loader.patch_size}")
         print(f"   Epochs: {epochs}")
         print(f"   Validation frequency: {validation_frequency} batches")
-        print(f"   Hostname: {socket.gethostname()}")
+        hostname = socket.gethostname().split('.')[0]
+        print(f"   Hostname: {hostname}")
         # TODO: Put dataset information and run information
 
         print("\nModel configuration:")
@@ -306,6 +309,7 @@ def main():
             maelstrom.util.print_memory_usage()
             s_time = time.time()
             history = trainer.evaluate(loader_test.get_dataset())
+            test_time = time.time() - s_time
             # eval_results = history.history
             """
             eval_results = testing(
@@ -317,7 +321,7 @@ def main():
                 model_name,
             )
             """
-            logger.add("Timing", "Testing", "total_time", time.time() - s_time)
+            logger.add("Timing", "Testing", "total_time", test_time)
             if maelstrom.util.is_list(history):
                 test_loss = history[0]
             else:
@@ -326,9 +330,12 @@ def main():
             #     logger.add("Scores", k, v)
             # test_loss = eval_results["test_loss"]
             logger.add("Scores", "test_loss", test_loss)
-            print("Testing results")
-            print(f"   Test time: {time.time() - s_time:.2f} s")
+            print("\nTesting results")
+            print(f"   Test size: {loader_test.size_gb * num_processes:.2f} GB")
+            print(f"   Test time: {test_time:.2f} s")
             print(f"   Test loss: {test_loss:.4f}")
+            performance = loader_test.size_gb * num_processes / test_time
+            print(f"   Test performance: {performance:.2f} GB/s")
             maelstrom.util.print_memory_usage()
 
         # Write loader statistics
@@ -358,10 +365,10 @@ def main():
                 print(layer.get_weights())
 
         # Add final information to logger
+        total_runtime = time.time() - start_time
         logger.add("Timing", "End time", int(time.time()))
-        logger.add("Timing", "Total", time.time() - s_time)
+        logger.add("Timing", "Total", total_runtime)
         logger.write()
-        total_runtime = time.time() - s_time
         print(f"   Total runtime: {total_runtime:.2f} s")
         maelstrom.util.print_gpu_usage("   Final GPU memory: ")
         maelstrom.util.print_cpu_usage("   Final CPU memory: ")
@@ -456,7 +463,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     total_loss = 0
     count = 0
 
-    if 1:
+    if 0:
         """Using keras.predict and prefetching
 
         The advantage is that prefetching will work automatically
@@ -513,7 +520,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
             evaluator.close()
 
         results["test_loss"] = total_loss
-    elif 1:
+    elif 0:
         """Calling predict on each sample"""
         num = len(loader)
         for i in range(num):
@@ -567,15 +574,8 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
 
         results["test_loss"] = total_loss
     else:
-        callbacks = [maelstrom.callback.Testing()]
-
-        # Which input predictor is the raw forecast?
-        Ip = loader.predictor_names.index("air_temperature_2m")
-
-        num = len(loader)
-        dataset = loader.get_dataset(1, 1)
-
-        trainer.predict(dataset, callbacks=callbacks)
+        # callbacks = [maelstrom.callback.Testing()]
+        trainer.evaluat(dataset) # , callbacks=callbacks)
     return results
 
 
