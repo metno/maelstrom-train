@@ -185,7 +185,7 @@ def main():
     model_description.update(model_config)
     num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))
     num_non_trainable_weights = int(np.sum([K.count_params(w) for w in model.non_trainable_weights]))
-    model_description["Num traininable parameters"] = num_trainable_weights
+    model_description["Num trainable parameters"] = num_trainable_weights
     model_description["Num non-trainable parameters"] = num_non_trainable_weights
     if main_process:
         logger.add("Model", model_description)
@@ -262,9 +262,11 @@ def main():
         print(f"   Model name: {model_name}")
         for k,v in model_config.items():
             print(f"   {k}: {v}")
+        print(f"   Num trainable parameters: {num_trainable_weights}")
 
     if args.do_train:
-        print("\n### Training ###")
+        if main_process:
+            print("\n### Training ###")
         maelstrom.util.print_memory_usage()
         history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
                 **kwargs)
@@ -277,13 +279,13 @@ def main():
             print(f"   Training performance: {performance:.2f} GB/s")
 
             loss = history.history["loss"]
-            print(f"   Last loss: {loss[-1]:.2f}")
-            print(f"   Best loss: {np.min(loss):.2f}")
+            print(f"   Last loss: {loss[-1]:.4f}")
+            print(f"   Best loss: {np.min(loss):.4f}")
 
         if "val_loss" in history.history:
             val_loss = history.history["val_loss"]
-            print(f"   Last val loss: {val_loss[-1]:.2f}")
-            print(f"   Best val loss: {np.min(val_loss):.2f}")
+            print(f"   Last val loss: {val_loss[-1]:.4f}")
+            print(f"   Best val loss: {np.min(val_loss):.4f}")
 
         # TODO: Enable this
         # if main_process:
@@ -312,7 +314,7 @@ def main():
             test_loss = eval_results["test_loss"]
             print("Testing results")
             print(f"   Test time: {time.time() - s_time:.2f} s")
-            print(f"   Test loss: {test_loss:.2f}")
+            print(f"   Test loss: {test_loss:.4f}")
             maelstrom.util.print_memory_usage()
 
         # Write loader statistics
@@ -348,10 +350,10 @@ def main():
         logger.add("Timing", "End time", int(time.time()))
         logger.add("Timing", "Total", time.time() - s_time)
         logger.write()
-        total_time = time.time() - s_time
+        total_runtime = time.time() - s_time
         print(f"   Total runtime: {total_runtime:.2f} s")
-        print_gpu_usage("   Final GPU memory: ")
-        print_cpu_usage("   Final CPU memory: ")
+        maelstrom.util.print_gpu_usage("   Final GPU memory: ")
+        maelstrom.util.print_cpu_usage("   Final CPU memory: ")
 
 
 def get_loaders(config, with_horovod):
