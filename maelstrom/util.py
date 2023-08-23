@@ -3,6 +3,7 @@ import datetime
 import numbers
 import os
 import resource
+import tensorflow as tf
 
 import gridpp
 import psutil
