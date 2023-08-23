@@ -284,11 +284,14 @@ def main():
             print(f"   Last loss: {loss[-1]:.4f}")
             print(f"   Best loss: {np.min(loss):.4f}")
 
-        if "val_loss" in history.history:
-            val_loss = history.history["val_loss"]
-            print(f"   Last val loss: {val_loss[-1]:.4f}")
-            print(f"   Best val loss: {np.min(val_loss):.4f}")
+            if "val_loss" in history.history:
+                val_loss = history.history["val_loss"]
+                print(f"   Last val loss: {val_loss[-1]:.4f}")
+                print(f"   Best val loss: {np.min(val_loss):.4f}")
 
+            if history is not None:
+                for key in history.history.keys():
+                    logger.add("Scores", key, history.history[key][-1])
         # TODO: Enable this
         # if main_process:
         #     model.load_weights(checkpoint_filepath)
@@ -302,6 +305,9 @@ def main():
             print(f"\n### Testing ###")
             maelstrom.util.print_memory_usage()
             s_time = time.time()
+            history = trainer.evaluate(loader_test.get_dataset())
+            # eval_results = history.history
+            """
             eval_results = testing(
                 config["evaluators"],
                 loader_test,
@@ -310,10 +316,13 @@ def main():
                 output_folder,
                 model_name,
             )
+            """
             logger.add("Timing", "Testing", "total_time", time.time() - s_time)
-            for k, v in eval_results.items():
-                logger.add("Scores", k, v)
-            test_loss = eval_results["test_loss"]
+            test_loss = history[0]
+            # for k, v in eval_results.items():
+            #     logger.add("Scores", k, v)
+            # test_loss = eval_results["test_loss"]
+            logger.add("Scores", "test_loss", test_loss)
             print("Testing results")
             print(f"   Test time: {time.time() - s_time:.2f} s")
             print(f"   Test loss: {test_loss:.4f}")
@@ -346,9 +355,6 @@ def main():
                 print(layer.get_weights())
 
         # Add final information to logger
-        if history is not None:
-            for key in history.history.keys():
-                logger.add("Scores", key, history.history[key][-1])
         logger.add("Timing", "End time", int(time.time()))
         logger.add("Timing", "Total", time.time() - s_time)
         logger.write()
