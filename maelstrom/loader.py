@@ -37,6 +37,7 @@ class Loader:
         batch_size=1,
         filename_validation_cache=None,
         num_parallel_calls=None,
+        cache=False,
         extra_features=[],
         quick_metadata=True,
         debug=False,
@@ -59,6 +60,7 @@ class Loader:
             predict_diff (bool): Change the prediction problem to estimate the forecast bias
             batch_size (int): Number of samples to use per batch
             filename_validation_cache (str): Cache validation data in this file
+            cache (bool): Cache the dataset?
             num_parallel_calls (int): Number of threads to use for each pipeline stage
             extra_features (dict): Configuration of extra features to generate
             quick_metadata (bool): Deduce date metadata from filename, instead of reading the file
@@ -77,6 +79,7 @@ class Loader:
         self.predict_diff = predict_diff
         self.batch_size = batch_size
         self.filename_validation_cache = filename_validation_cache
+        self.cache = cache
         self.filename_normalization = normalization
         self.create_fake_data = create_fake_data
         self.num_parallel_calls = num_parallel_calls
@@ -259,6 +262,9 @@ class Loader:
 
         if self.filename_validation_cache is not None:
             dataset = dataset.cache(self.filename_validation_cache)
+
+        if self.cache:
+            dataset = dataset.cache()
 
         # Copy data to the GPU
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
