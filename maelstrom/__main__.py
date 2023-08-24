@@ -450,7 +450,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     loss = trainer.loss
 
     evaluators = get_evaluators(
-        config, loader, model, loss, quantiles, output_folder, model_name
+        config, loader, model, loss, quantiles, output_folder, model_name, with_horovod
     )
 
     # Which input predictor is the raw forecast?
@@ -459,7 +459,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     total_loss = 0
     count = 0
 
-    if len(evaluators) > 0:
+    if len(evaluators) == 0:
         """ Use keras build in predict. The disadvantage is that we can't evaluate results per
         leadtime """
         history = trainer.evaluate(loader.get_dataset())
@@ -581,7 +581,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     return total_loss
 
 
-def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_name):
+def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_name, with_horovod=False):
     if config is None:
         return []
 
@@ -606,6 +606,9 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             )
         elif eval_type == "aggregator":
             filename = f"{output_folder}/{model_name}_test.txt"
+            if with_horovod:
+                rank = hvd.local_rank()
+                filename = f"{filename}.{rank}"
             evaluator = maelstrom.evaluator.Aggregator(filename, leadtimes, loss)
         else:
             raise ValueError(f"Unknown validation type {eval_type}")
