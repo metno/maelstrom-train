@@ -305,14 +305,13 @@ def main():
         logger.add("Timing", "Training", "end_time", int(time.time()))
 
         if args.do_test:
+            if not loader.check_compatibility(loader_test):
+                raise Exception("Loaders do not have the same predictors in the same order")
             print(f"\n### Testing ###")
             maelstrom.util.print_memory_usage()
             s_time = time.time()
-            history = trainer.evaluate(loader_test.get_dataset())
-            test_time = time.time() - s_time
-            # eval_results = history.history
-            """
-            eval_results = testing(
+            # history = trainer.evaluate(loader_test.get_dataset())
+            test_loss = testing(
                 config["evaluators"],
                 loader_test,
                 quantiles,
@@ -320,12 +319,9 @@ def main():
                 output_folder,
                 model_name,
             )
-            """
+            # eval_results = history.history
+            test_time = time.time() - s_time
             logger.add("Timing", "Testing", "total_time", test_time)
-            if maelstrom.util.is_list(history):
-                test_loss = history[0]
-            else:
-                test_loss = history
             # for k, v in eval_results.items():
             #     logger.add("Scores", k, v)
             # test_loss = eval_results["test_loss"]
@@ -336,7 +332,6 @@ def main():
             print(f"   Test loss: {test_loss:.4f}")
             performance = loader_test.size_gb * num_processes / test_time
             print(f"   Test performance: {performance:.2f} GB/s")
-            maelstrom.util.print_memory_usage()
 
         # Write loader statistics
         for name, curr_time in loader.timing.items():
@@ -369,6 +364,7 @@ def main():
         logger.add("Timing", "End time", int(time.time()))
         logger.add("Timing", "Total", total_runtime)
         logger.write()
+        print("\nOverall information")
         print(f"   Total runtime: {total_runtime:.2f} s")
         maelstrom.util.print_gpu_usage("   Final GPU memory: ")
         maelstrom.util.print_cpu_usage("   Final CPU memory: ")
@@ -463,7 +459,15 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
     total_loss = 0
     count = 0
 
-    if 0:
+    if len(evaluators) > 0:
+        """ Use keras build in predict. The disadvantage is that we can't evaluate results per
+        leadtime """
+        history = trainer.evaluate(loader.get_dataset())
+        if maelstrom.util.is_list(history):
+            total_loss = history[0]
+        else:
+            total_loss = history
+    elif 1:
         """Using keras.predict and prefetching
 
         The advantage is that prefetching will work automatically
@@ -573,10 +577,8 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
             evaluator.close()
 
         results["test_loss"] = total_loss
-    else:
-        # callbacks = [maelstrom.callback.Testing()]
-        trainer.evaluat(dataset) # , callbacks=callbacks)
-    return results
+    # return results
+    return total_loss
 
 
 def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_name):
