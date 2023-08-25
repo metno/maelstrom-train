@@ -273,8 +273,16 @@ def main():
         if main_process:
             print("\n### Training ###")
         maelstrom.util.print_memory_usage()
-        history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks,
-                **kwargs)
+        if num_trainable_weights > 0:
+            history = trainer.fit(dataset, epochs=keras_epochs, callbacks=callbacks, **kwargs)
+            training_results = history.history
+        else:
+            # Horovod does not like training models without traininable parameters
+            training_results = dict()
+            training_results["loss"] = [trainer.evaluate(dataset)]
+            if do_validation:
+                training_results["val_loss"] = [trainer.evaluate(dataset_val)]
+
         if main_process:
             print("\nTraining results")
             training_time = time.time() - start_time
@@ -283,23 +291,20 @@ def main():
             performance = loader.size_gb * num_processes / (training_time / epochs)
             print(f"   Training performance: {performance:.2f} GB/s")
 
-            loss = history.history["loss"]
+            loss = training_results["loss"]
             print(f"   Last loss: {loss[-1]:.4f}")
             print(f"   Best loss: {np.min(loss):.4f}")
 
-            if "val_loss" in history.history:
-                val_loss = history.history["val_loss"]
+            if "val_loss" in training_results:
+                val_loss = training_results["val_loss"]
                 print(f"   Last val loss: {val_loss[-1]:.4f}")
                 print(f"   Best val loss: {np.min(val_loss):.4f}")
 
-            if history is not None:
-                for key in history.history.keys():
-                    logger.add("Scores", key, history.history[key][-1])
+            for key in training_results.keys():
+                logger.add("Scores", key, training_results[key][-1])
         # TODO: Enable this
         # if main_process:
         #     model.load_weights(checkpoint_filepath)
-    else:
-        history = None
 
     if main_process:
         logger.add("Timing", "Training", "end_time", int(time.time()))
