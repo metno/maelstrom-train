@@ -532,7 +532,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
                 evaluator.sync()
 
         for evaluator in evaluators:
-            if with_horovod and hvd.local_rank() == 0:
+            if not with_horovod or hvd.local_rank() == 0:
                 evaluator.write()
             evaluator.close()
 

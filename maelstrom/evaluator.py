@@ -1,7 +1,10 @@
 import numpy as np
-import horovod.tensorflow as hvd
 
 import maelstrom
+
+with_horovod = maelstrom.check_horovod()
+if with_horovod:
+    import horovod.tensorflow as hvd
 
 
 class Evaluator:
@@ -112,7 +115,7 @@ class Aggregator(Evaluator):
         curr_loss = self.loss(targets, fcst)
         meanfcst = np.mean(fcst)
         meantarget = np.mean(targets)
-        values = (forecast_reference_time, leadtime, curr_loss, meanfcst, meantarget)
+        values = (forecast_reference_time, leadtime, meantarget, meanfcst, curr_loss)
         self.values += [values]
 
     def sync(self):
@@ -122,7 +125,7 @@ class Aggregator(Evaluator):
     def write(self):
         with open(self.filename, "w") as file:
             file.write("unixtime leadtime obs fcst loss\n")
-            for forecast_reference_time, leadtime, value, meanfcst, meantarget in self.values:
+            for forecast_reference_time, leadtime, meantarget, meanfcst, loss in self.values:
                 file.write(
                     "%d %d %.5f %.5f %.5f\n"
                     % (
