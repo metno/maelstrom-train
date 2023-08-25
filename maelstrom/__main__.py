@@ -619,9 +619,6 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             )
         elif eval_type == "aggregator":
             filename = f"{output_folder}/{model_name}_test.txt"
-            if with_horovod:
-                rank = hvd.local_rank()
-                filename = f"{filename}.{rank}"
             evaluator = maelstrom.evaluator.Aggregator(filename, leadtimes, loss)
         else:
             raise ValueError(f"Unknown validation type {eval_type}")
