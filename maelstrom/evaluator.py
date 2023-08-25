@@ -1,4 +1,5 @@
 import numpy as np
+import horovod.tensorflow as hvd
 
 import maelstrom
 
@@ -6,6 +7,12 @@ import maelstrom
 class Evaluator:
     def evaluate(self, forecast_reference_time, fcst, targets):
         raise NotImplementedError()
+
+    def sync(self):
+        pass
+
+    def write(self):
+        pass
 
     def close(self):
         pass
@@ -80,7 +87,7 @@ class Verif(Evaluator):
             self.file.add_quantile_forecast(forecast_reference_time, curr_fcst)
         self.file.sync()
 
-    def close(self):
+    def write(self):
         self.file.write()
 
 
@@ -89,8 +96,8 @@ class Aggregator(Evaluator):
         self.filename = filename
         self.leadtimes = leadtimes
         self.loss = loss
-        with open(self.filename, "w") as file:
-            file.write("unixtime leadtime obs fcst loss\n")
+        # Store data as a list of tuples. Each tuple contains the metadata and loss values
+        self.values = list()
 
     def evaluate(self, forecast_reference_time, leadtime, fcst, targets):
         """
@@ -102,15 +109,27 @@ class Aggregator(Evaluator):
         assert len(fcst.shape) == 3
         assert len(targets.shape) == 3
 
-        with open(self.filename, "a") as file:
-            curr_loss = self.loss(targets, fcst)
-            file.write(
-                "%d %d %.5f %.5f %.5f\n"
-                % (
-                    forecast_reference_time,
-                    leadtime // 3600,
-                    np.nanmean(targets),
-                    np.nanmean(fcst),
-                    curr_loss,
+        curr_loss = self.loss(targets, fcst)
+        meanfcst = np.mean(fcst)
+        meantarget = np.mean(targets)
+        values = (forecast_reference_time, leadtime, curr_loss, meanfcst, meantarget)
+        self.values += [values]
+
+    def sync(self):
+        allvalues = hvd.allgather_object(self.values)
+        self.values = sum(allvalues, [])
+
+    def write(self):
+        with open(self.filename, "w") as file:
+            file.write("unixtime leadtime obs fcst loss\n")
+            for forecast_reference_time, leadtime, value, meanfcst, meantarget in self.values:
+                file.write(
+                    "%d %d %.5f %.5f %.5f\n"
+                    % (
+                        forecast_reference_time,
+                        leadtime // 3600,
+                        meantarget,
+                        meanfcst,
+                        loss,
+                    )
                 )
-            )

@@ -304,23 +304,26 @@ def main():
     if main_process:
         logger.add("Timing", "Training", "end_time", int(time.time()))
 
-        if args.do_test:
-            if not loader.check_compatibility(loader_test):
-                raise Exception("Loaders do not have the same predictors in the same order")
+    if args.do_test:
+        if not loader.check_compatibility(loader_test):
+            raise Exception("Loaders do not have the same predictors in the same order")
+        if main_process:
             print(f"\n### Testing ###")
             maelstrom.util.print_memory_usage()
-            s_time = time.time()
-            # history = trainer.evaluate(loader_test.get_dataset())
-            test_loss = testing(
-                config["evaluators"],
-                loader_test,
-                quantiles,
-                trainer,
-                output_folder,
-                model_name,
-            )
-            # eval_results = history.history
-            test_time = time.time() - s_time
+        s_time = time.time()
+        # history = trainer.evaluate(loader_test.get_dataset())
+        test_loss = testing(
+            config["evaluators"],
+            loader_test,
+            quantiles,
+            trainer,
+            output_folder,
+            model_name,
+            with_horovod,
+        )
+        # eval_results = history.history
+        test_time = time.time() - s_time
+        if main_process:
             logger.add("Timing", "Testing", "total_time", test_time)
             # for k, v in eval_results.items():
             #     logger.add("Scores", k, v)
@@ -333,6 +336,7 @@ def main():
             performance = loader_test.size_gb * num_processes / test_time
             print(f"   Test performance: {performance:.2f} GB/s")
 
+    if main_process:
         # Write loader statistics
         for name, curr_time in loader.timing.items():
             logger.add("Timing", "Loader", name, curr_time)
@@ -430,7 +434,7 @@ def get_model(loader, num_outputs, configs, model, multi=False):
     raise ValueError(f"Model {model} not defined in configuration file")
 
 
-def testing(config, loader, quantiles, trainer, output_folder, model_name):
+def testing(config, loader, quantiles, trainer, output_folder, model_name, with_horovod):
     """Runs model testing and returns final test loss
 
     Args:
@@ -520,10 +524,19 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name):
 
         total_loss /= count
 
+        if with_horovod:
+            total_loss_list = hvd.allgather_object(total_loss)
+            total_loss = np.mean(total_loss_list)
+
+            for evaluator in evaluators:
+                evaluator.sync()
+
         for evaluator in evaluators:
+            if with_horovod and hvd.local_rank() == 0:
+                evaluator.write()
             evaluator.close()
 
-        results["test_loss"] = total_loss
+        # results["test_loss"] = total_loss
     elif 0:
         """Calling predict on each sample"""
         num = len(loader)
