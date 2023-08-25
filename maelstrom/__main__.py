@@ -269,7 +269,7 @@ def main():
             print(f"   {k}: {v}")
         print(f"   Num trainable parameters: {num_trainable_weights}")
 
-    if args.do_train and num_trainable_weights > 0:
+    if args.do_train:
         if main_process:
             print("\n### Training ###")
         maelstrom.util.print_memory_usage()
