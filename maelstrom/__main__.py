@@ -278,10 +278,11 @@ def main():
             training_results = history.history
         else:
             # Horovod does not like training models without traininable parameters
+            eval_callbacks = [hvd.keras.callbacks.MetricAverageCallback()]
             training_results = dict()
-            training_results["loss"] = [trainer.evaluate(dataset)]
+            training_results["loss"] = [trainer.evaluate(dataset, callbacks=eval_callbacks)]
             if do_validation:
-                training_results["val_loss"] = [trainer.evaluate(dataset_val)]
+                training_results["val_loss"] = [trainer.evaluate(dataset_val, callbacks=eval_callbacks)]
 
         if main_process:
             print("\nTraining results")
