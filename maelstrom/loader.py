@@ -108,11 +108,22 @@ class Loader:
         if self.with_horovod:
             if len(self.filenames) == 0:
                 raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
-            start = hvd.rank() * math.ceil(len(self.filenames) // hvd.size())
-            end = (hvd.rank() + 1 ) * math.ceil(len(self.filenames) // hvd.size())
-            if end > len(self.filenames):
-                end = len(self.filenames)
-            self.filenames = [self.filenames[f] for f in range(start, end)]
+            # Don't use random filenames, since then we cannot guarantee that the all files are used
+            # across the ranks
+            # I = np.argssort(np.random.rand(len(self.filenames)))
+            # self.filenames = [self.filenames[I[f]] for f in range(start, end))]
+
+            # Shard into hvd.size() blocks. This gives each rank a very seasonal subset, which is
+            # not ideal.
+            # start = hvd.rank() * math.ceil(len(self.filenames) // hvd.size())
+            # end = (hvd.rank() + 1 ) * math.ceil(len(self.filenames) // hvd.size())
+            # if end > len(self.filenames):
+            #     end = len(self.filenames)
+            # self.filenames = [self.filenames[f] for f in range(start, end)]
+
+            # Send every hvd.size()'th file to a given rank. This should give each rank a good mix
+            # of dates.
+            self.filenames = [self.filenames[f] for f in range(hvd.rank(), len(self.filenames), hvd.size())]
             if len(self.filenames) == 0:
                 raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
 
@@ -177,16 +188,17 @@ class Loader:
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
 
-        if shard_size is None:
-            dataset = tf.data.Dataset.range(self.num_files)
-        else:
-            start = shard_index * math.ceil(self.num_files // shard_size)
-            end = (shard_index + 1) * math.ceil(self.num_files // shard_size)
-            print("SHARD", shard_index, start, end)
-            dataset = tf.data.Dataset.range(start, end)
-
+        dataset = tf.data.Dataset.range(self.num_files)
         if randomize_order:
             dataset = dataset.shuffle(len(self.filenames))
+
+        if shard_size is None:
+            # start = shard_index * math.ceil(self.num_files // shard_size)
+            # end = (shard_index + 1) * math.ceil(self.num_files // shard_size)
+            # print("SHARD", shard_index, start, end)
+            # dataset = tf.data.Dataset.range(start, end)
+            dataset = dataset.shart(shard_size, shard_index)
+
         if repeat is not None:
             dataset = dataset.repeat(repeat)
 
