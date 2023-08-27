@@ -192,12 +192,12 @@ class Loader:
         if randomize_order:
             dataset = dataset.shuffle(len(self.filenames))
 
-        if shard_size is None:
+        if shard_size is not None:
             # start = shard_index * math.ceil(self.num_files // shard_size)
             # end = (shard_index + 1) * math.ceil(self.num_files // shard_size)
             # print("SHARD", shard_index, start, end)
             # dataset = tf.data.Dataset.range(start, end)
-            dataset = dataset.shart(shard_size, shard_index)
+            dataset = dataset.shard(shard_size, shard_index)
 
         if repeat is not None:
             dataset = dataset.repeat(repeat)
