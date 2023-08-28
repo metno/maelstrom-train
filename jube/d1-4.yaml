@@ -1,0 +1,309 @@
+name:    d1-4
+outpath: d1-4
+comment: MAELSTROM AP1 D1-4 benchmark jube script
+
+parameterset:
+  - name: appParameters
+    parameter:
+      - name: experiment
+        type: string
+        _: exp2
+        #_: raw
+      - name: model
+        type: string
+        _: unet_f16_l3_c1_p4
+        # _: dense_f12_l6
+        # _: 
+        # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, unet_f16_l3_c1_p4, dense_f12_l6
+        # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, dense_f12_l6
+        # _: raw
+      - name: homedir
+        type: string
+        # _: /p/home/jusers/nipen1/juwels/repos/maelstrom-train/
+        _: $jube_benchmark_home/../
+      - name: outdir
+        type: string
+        _: "$jube_wp_abspath/results"
+      - name: test_flag
+        tag: "notest"
+        _: --test=0
+      - name: test_flag
+        tag: "!notest"
+        _: --test=1
+      - name: program
+        type: string
+        # _: $jube_benchmark_home/../benchmark/benchmark.py
+        _: -m maelstrom
+      - name: iteration
+        type: int
+        _: 0 # ,1,2
+      - name: config_file
+        type: string
+        tag: "!test"
+        _: ${homedir}/etc/d1-4/${experiment}.yml
+      - name: config_file
+        type: string
+        tag: "test"
+        _: ${homedir}/etc/d1-4/exp${experiment}_debug.yml
+  - name: trainParameters
+    parameter:
+      - name: mode
+        type: string
+        _: train
+      - name: program_args
+        type: string
+        _: "--config ${config_file} -m ${model} -o $outdir/ $test_flag"
+  - name: globalParameter
+    parameter:
+      - name: modules
+        tag: "jwb|jwc"
+        separator: |
+        _: 
+          module load Stages/2022 &&
+          module load GCCcore/.11.2.0 &&
+          module load TensorFlow/2.6.0-CUDA-11.5 &&
+          module load GCC/11.2.0 &&
+          module load OpenMPI/4.1.2 &&
+          module load mpi4py/3.1.3 &&
+          module load Horovod/0.24.3
+      - name: modules
+        tag: e4intel|e4amd
+        separator: |
+        _:
+          module load slurm &&
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate
+      - name: systemname
+        tag: jwc
+        _: jwc
+      - name: systemname
+        tag: jwb
+        _: jwb
+      - name: systemname
+        tag: e4intel
+        _: e4intel
+      - name: systemname
+        tag: e4amd
+        _: e4amd
+  - name: executeset
+    init_with: platform.xml
+  - name: systemParameter
+    init_with: platform.xml
+    parameter:
+      - name: preprocess
+        mode: text
+        tag: e4intel|e4amd
+        # separator: |
+        _:
+          export label=$$(/opt/share/scripts/powerdiscovery/getlabel.sh);
+          echo "POWERMEASUREMENT Label = $$label";
+          /opt/share/scripts/powerdiscovery/getpower_bg.sh 1000 &
+          $modules;
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: preprocess
+        mode: text
+        tag: "!e4intel+!e4amd"
+        # separator: |
+        _:
+          $modules;
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: postprocess
+        mode: text
+        tag: e4intel|e4amd
+        separator: |
+        _: |
+          kill -9 $$(cat ~/powerout.$$label.pid)
+          awk '{print "POWERMEASUREMENT: " $0}' ~/powerout.$$label.csv
+
+      # NOTE: put n_procs here. If it is put in the different steps (train, load, infer), then jube won't
+      # run since then threadspertask cannot be computed. It gives the following error:
+      # Cannot evaluate "48 // $num_procs" for parameter "calc_threadspertask": invalid syntax (<string>, line 1)
+      - {name: n_cpu, _: 96, tag: jwb}
+      - {name: n_cpu, _: 80, tag: jwc}
+      - {name: n_cpu, _: 32, tag: e4intel|e4amd}
+      - name: SRUN_CPUS_PER_TASK
+        export: true
+        _: ${SLURM_CPUS_PER_TASK}
+      - name: HDF5_USE_FILE_LOCKING
+        export: true
+        tag: cscratch
+        _: "FALSE"
+      - name: nodes
+        _: 1
+      - name: n_procs
+        tag: jwb
+        _: 4 # 1,2,
+      - name: n_procs
+        tag: "!jwb"
+        _: 1
+      - name: n_gpu
+        _: $n_procs
+      - name: taskspernode
+        _: $n_procs
+      - name: threadspertask
+        mode: python
+        type: int
+        _:  $n_cpu // $n_procs
+      - name: timelimit
+        _: "03:00:00"
+      - name: account
+        tag: jwb|jwc
+        _: deepacf
+      - name: account
+        tag: e4amd|e4intel
+        _: maelstrom
+      - name: queue
+        tag: jwb+!test
+        _: booster
+      - name: queue
+        tag: jwb+test
+        _: develbooster
+      - name: queue
+        tag: jwc+!test
+        _: gpus
+      - name: queue
+        tag: jwc+test
+        _: develgpus
+      - name: queue
+        tag: e4intel
+        _: i-gpu-a100
+      - name: queue
+        tag: e4amd
+        _: a-gpu-mi100
+      - name: gres
+        _: gpu:$n_gpu
+      - name: additional_job_config
+        tag: e4intel|e4amd
+        _: "#SBATCH --mem=256Gb"
+      - name: executable
+        _: python -u ${program}
+      - name: args_exec
+        mode: text
+        _: > 
+          ${program_args}
+
+patternset:
+   - name: perf_patterns
+     pattern:
+         # - {name: jube_id, type: string, _: "$jube_benchmark_id"}
+         # - {name: jube_wp_id, type: string, _: "$jube_wp_id"}
+      - {name: jobid, type: int, _: "Submitted batch job $jube_pat_int" }
+      - {name: training_time, type: float, _: "Training time:\\s+${jube_pat_fp} s"}
+      - {name: test_time, type: float, _: "Test time:\\s+${jube_pat_fp} s"}
+      - {name: total_time, type: float, _: "Total runtime:\\s+${jube_pat_fp} s"}
+      - {name: epoch_time_avg, type: float, _: "Training time per epoch:\\s+$jube_pat_fp s"}
+      - {name: num_epoch, type: float, _: "Epochs:\\s+$jube_pat_fp s"}
+      - {name: last_loss, type: float, _: "Last loss:\\s+$jube_pat_fp"}
+      - {name: best_loss, type: float, _: "Best loss:\\s+$jube_pat_fp"}
+      - {name: last_val_loss, type: float, _: "Last val loss:\\s+$jube_pat_fp"}
+      - {name: best_val_loss, type: float, _: "Best val loss:\\s+$jube_pat_fp"}
+      - {name: test_loss, type: float, _: "Test loss:\\s+$jube_pat_fp"}
+      - {name: training_performance, type: float, _: "Training performance:\\s+$jube_pat_fp GB/s"}
+      - {name: test_performance, type: float, _: "Test performance:\\s+$jube_pat_fp GB/s"}
+      - {name: model_name, type: string, _: "Model name:\\s+$jube_pat_wrd"}
+      - {name: conv_size, type: int, _: "conv_size:\\s+$jube_pat_fp"}
+      - {name: pool_size, type: int, _: "pool_size:\\s+$jube_pat_fp"}
+      - {name: num_layers, type: int, _: "layers:\\s+$jube_pat_fp"}
+      - {name: num_units, type: int, _: "units:\\s+$jube_pat_fp"}
+      - {name: num_features, type: int, _: "features:\\s+$jube_pat_fp"}
+      - {name: num_parameters, type: int, _: "Num trainable parameters:\\s+$jube_pat_fp"}
+      - {name: training_size, type: int, _: "Training size:\\s+$jube_pat_fp GB"}
+      - {name: validation_size, type: int, _: "Validation size:\\s+$jube_pat_fp GB"}
+      - {name: test_size, type: int, _: "Test size:\\s+$jube_pat_fp GB"}
+      - {name: batch_size, type: int, _: "Batch size:\\s+$jube_pat_fp"}
+      - {name: patch_size, type: int, _: "Patch size:\\s+$jube_pat_fp"}
+      - {name: num_epochs, type: int, _: "Epochs:\\s+$jube_pat_fp"}
+      - {name: val_freq, type: int, _: "Validation frequency:\\s+$jube_pat_fp batches"}
+      - {name: hostname, type: string, _: "Hostname:\\s$jube_pat_wrd"}
+      - {name: cpu_mem, type: float, _: "Final CPU memory:.*peak: $jube_pat_fp GB"}
+      - {name: gpu_mem, type: float, _: "Final GPU memory:.*peak: $jube_pat_fp GB"}
+
+
+analyser:
+    - name: analyse_train
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: train
+        file:
+            - stdout
+            - job.out
+
+result:
+    - use: analyse_train
+      table:
+        name: result
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "JUBE id", _: jube_benchmark_id}
+          - {title: "JUBE workpackage", _: jube_wp_id}
+          - {title: "Experiment", _: experiment}
+          - {title: "JobID", _: jobid}
+          - {title: "# nodes", _: nodes}
+          - {title: "# gpu", _: n_gpu}
+          - {title: "num procs", _: n_procs}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "Batch size", _: batch_size}
+          - {title: "Patch size", _: patch_size}
+          - {title: "Epochs", _: num_epochs}
+          - {title: "Validation frequency", _: val_freq}
+          - {title: "Training size", _: training_size}
+          - {title: "Validation size", _: validation_size}
+          - {title: "Test size", _: test_size}
+          - {title: "Model name", _: model_name}
+          - {title: "Number of parameters", _: num_parameters}
+          - {title: "Features", _: num_features}
+          - {title: "Layers", _: num_layers}
+          - {title: "Convolution size", _: conv_size}
+          - {title: "Pool size", _: pool_size}
+          - {title: "Best training loss", _: best_loss}
+          - {title: "Best val loss", _: best_val_loss}
+          - {title: "Test loss", _: test_loss}
+          - {title: "Total runtime", _: total_time}
+          - {title: "Training time", _: training_time}
+          - {title: "Test time", _: test_time}
+          - {title: "Training performance", _: training_performance}
+          - {title: "Test performance", _: test_performance}
+          - {title: "Hostname", _: hostname}
+            # - {title: "max cpu mem", _: cpu_mem}
+            # - {title: "max gpu mem", _: gpu_mem}
+            # - {title: "node_id", _: node_id}
+            # - {title: "Max. Watts",      _: watt_pat_max}
+            # - {title: "Avg. Watts",      _: watt_pat_avg}
+          # - {title: "Min. Watts",      _: watt_pat_min}
+          # - {title: "Max. VA",         _: va_pat_max}
+          # - {title: "Avg. VA",         _: va_pat_avg}
+          # - {title: "Min. VA",         _: va_pat_min}
+
+step:
+  - name: setup_venv
+    active: false
+    use:
+      - globalParameter
+      - systemParameter
+    do:
+      _:
+        $modules;
+        cd $jube_benchmark_home/../setup_env/ &&
+        source ./setup_${systemname}.sh
+
+  # Traning experiments
+  - name: train
+    active: true
+    use:
+      - appParameters
+      - trainParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _: 
+        $modules;
+        ln -s $jube_benchmark_home/../data data;
+        $submit $submit_script
