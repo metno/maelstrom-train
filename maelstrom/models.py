@@ -456,6 +456,7 @@ class Unet(Model):
         separable=False,
         with_leadtime=False,
         batch_normalization=False,
+        downsampling="max",
     ):
         """U-net
 
@@ -478,6 +479,7 @@ class Unet(Model):
         self._upsampling_type = upsampling_type
         self._separable = separable
         self._batch_normalization = batch_normalization
+        self._downsampling = downsampling
 
         new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
 
@@ -525,7 +527,12 @@ class Unet(Model):
             layers += [outputs]
             # print(i, outputs.shape)
 
-            outputs = keras.layers.MaxPooling3D(pool_size=pool_size)(outputs)
+            if self._downsampling == "max":
+                outputs = keras.layers.MaxPooling3D(pool_size=pool_size)(outputs)
+            elif self._downsampling == "min":
+                outputs = keras.layers.MinPooling3D(pool_size=pool_size)(outputs)
+            elif self._downsampling == "mean":
+                outputs = keras.layers.AveragePooling3D(pool_size=pool_size)(outputs)
             features *= 2
 
         # conv -> conv
