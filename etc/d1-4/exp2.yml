@@ -1,0 +1,15 @@
+# Experiment2: Test different learning rates
+training:
+    trainer:
+        type: keras
+    optimizer:
+        type: adam
+        learning_rate:
+            type: cosinedecayrestarts
+            initial_learning_rate: 1.0e-2
+            first_decay_steps: 6372
+            t_mul: 1.0
+            m_mul: 1.0
+    num_epochs: 1
+    # validation_frequency: 1 epoch
+    validation_frequency: 36 file

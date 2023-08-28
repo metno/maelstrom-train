@@ -1,0 +1,53 @@
+# This configuration is used to benchmark HPC systems
+# It runs the benchmark model for a single file, over multiple epochs
+models:
+    - type: BasicBenchmark
+      name: cnn
+      leadtime_dependent: False
+      neighbourhood_size: 3
+      filter_sizes: [12, 5, 5]
+    - type: Unet
+      name: unet_f16_l6_c3_p2
+      features: 16
+      layers: 6
+      conv_size: 3
+      pool_size: 2
+    - type: Unet
+      name: unet_f16_l6_c1_p2
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+    - type: Unet
+      name: unet_f16_l3_c3_p4
+      features: 16
+      layers: 3
+      conv_size: 3
+      pool_size: 4
+    - type: Unet
+      name: unet_f16_l3_c1_p4
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 4
+      # separable: True
+      # batch_normalization: True
+    - type: Dense
+      name: dense_f12_l6
+      features: 12
+      layers: 6
+      activation: "relu"
+    - type: SelectPredictor
+      name: raw
+      predictor_names: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+    - type: Today
+      with_leadtime: True
+output:
+    quantiles: [0.1, 0.5, 0.9]
+loss:
+    type: quantile_score
+    # trim: 10
+evaluators:
+    - type: aggregator
+tensorflow:
+    num_threads: 48

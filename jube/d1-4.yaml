@@ -5,15 +5,20 @@ comment: MAELSTROM AP1 D1-4 benchmark jube script
 parameterset:
   - name: appParameters
     parameter:
+      - name: loader
+        type: string
+        # _: "_raw"
+        # _: ""
+        _: "_today"
       - name: experiment
         type: string
         _: exp2
         #_: raw
       - name: model
         type: string
-        _: unet_f16_l3_c1_p4
+        # _: unet_f16_l3_c1_p4
+        _: today
         # _: dense_f12_l6
-        # _: 
         # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, unet_f16_l3_c1_p4, dense_f12_l6
         # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, dense_f12_l6
         # _: raw
@@ -37,10 +42,10 @@ parameterset:
       - name: iteration
         type: int
         _: 0 # ,1,2
-      - name: config_file
+      - name: config_files
         type: string
         tag: "!test"
-        _: ${homedir}/etc/d1-4/${experiment}.yml
+        _: "${homedir}/etc/d1-4/${experiment}.yml ${homedir}/etc/d1-4/loader${loader}.yml ${homedir}/etc/d1-4/common.yml"
       - name: config_file
         type: string
         tag: "test"
@@ -52,7 +57,7 @@ parameterset:
         _: train
       - name: program_args
         type: string
-        _: "--config ${config_file} -m ${model} -o $outdir/ $test_flag"
+        _: "--config ${config_files} -m ${model} -o $outdir/ $test_flag"
   - name: globalParameter
     parameter:
       - name: modules
