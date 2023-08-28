@@ -614,7 +614,7 @@ class Today(Model):
             self,
             input_shape,
             num_outputs,
-            with_leadtime,
+            with_leadtime=False,
     ):
         self.num_leadtimes = input_shape[0]
         print(input_shape)
