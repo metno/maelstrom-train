@@ -36,7 +36,7 @@ def get(**kwargs):
 class LeadtimeLayer(keras.layers.Layer):
     """A layer that wraps an existing layer and runs it separately for each leadtime"""
 
-    def __init__(self, layer, mode="dependent", remove_leadtime_dimension=False):
+    def __init__(self, layer, mode="dependent", remove_leadtime_dimension=False, num_leadtimes=None):
         super().__init__()
         # self._name = self._name + "_Yangula_bangula"
 
@@ -48,9 +48,13 @@ class LeadtimeLayer(keras.layers.Layer):
         self.layer_weights = list()
         self.layers = list()
         self.remove_leadtime_dimension = remove_leadtime_dimension
+        self.num_leadtimes = num_leadtimes
 
     def build(self, input_shape):
-        num_leadtimes = input_shape[1]
+        if self.num_leadtimes is None:
+            num_leadtimes = input_shape[1]
+        else:
+            num_leadtimes = self.num_leadtimes
         # TODO: Why are we not inserting a singleton leadtime dimension here?
         # Don't some of the models require a leadtime dimension (except if
         # remove_leadtime_dimension=True)?
@@ -71,7 +75,10 @@ class LeadtimeLayer(keras.layers.Layer):
 
     def call(self, inputs):
         # print(inputs.shape)
-        num_leadtimes = inputs.shape[1]
+        if self.num_leadtimes is None:
+            num_leadtimes = inputs.shape[1]
+        else:
+            num_leadtimes = self.num_leadtimes
         outputs = list()
         for i in range(num_leadtimes):
             if self.remove_leadtime_dimension:

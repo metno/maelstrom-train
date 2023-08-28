@@ -599,6 +599,43 @@ class Dense(Model):
         return layers
 
 
+class Today(Model):
+    """Model used operationally today
+
+    Note this model must have:
+        - limit_predictors: ["air_temperature_2m", "air_temperature_0.1_2m", "air_temperature_0.9_2m",
+"altitude", "model_altitude", "bias_recent", "bias_yesterday"]
+        - No normalization
+        - No extra predictors
+        - predict_diff: True
+        - with_leadtime: True
+    """
+    def __init__(
+            self,
+            input_shape,
+            num_outputs,
+    ):
+        self.num_leadtimes = input_shape[0]
+        print(input_shape)
+        new_input_shape = get_input_size(input_shape, False, False)
+        super().__init__(new_input_shape, num_outputs)
+
+    def get_outputs(self, inputs):
+        # Ecah quantile is a linear regression of all the inputs.
+        elev_diff = tf.expand_dims(inputs[..., 3] - inputs[..., 4], -1)
+        bias_recent = tf.expand_dims(inputs[..., 5], -1)
+        bias_yesterday = tf.expand_dims(inputs[..., 6], -1)
+        inputs_new = list([elev_diff, bias_recent, bias_yesterday])
+        inputs_new = keras.layers.Concatenate(axis=-1)(inputs_new)
+        layer = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)
+        layer = maelstrom.layers.LeadtimeLayer(layer, num_leadtimes=self.num_leadtimes)
+        outputs = layer(inputs_new)
+
+        # outputs = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)(inputs_new)
+
+        return outputs
+
+
 class Epic(Model):
     """"""
 
