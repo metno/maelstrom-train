@@ -496,6 +496,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
 
         ss_time = time.time()
 
+        progbar = tf.keras.utils.Progbar(loader.num_batches)  # , stateful_metrics=['val_loss'])
         for batch, (bfcst, btargets) in enumerate(dataset):
             btargets = np.copy(btargets)
             bpred = trainer.predict_on_batch(bfcst)
@@ -512,6 +513,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
             curr_loss = float(loss(btargets, bpred))
             total_loss += curr_loss
             count += 1
+            progbar.update(batch, [("loss", curr_loss)])
 
             for sample in range(bpred.shape[0]):
                 forecast_reference_time = loader.get_time_from_batch(batch, sample)
