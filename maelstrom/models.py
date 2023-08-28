@@ -614,10 +614,12 @@ class Today(Model):
             self,
             input_shape,
             num_outputs,
+            with_leadtime,
     ):
         self.num_leadtimes = input_shape[0]
         print(input_shape)
         new_input_shape = get_input_size(input_shape, False, False)
+        self.with_leadtime = with_leadtime
         super().__init__(new_input_shape, num_outputs)
 
     def get_outputs(self, inputs):
@@ -627,11 +629,13 @@ class Today(Model):
         bias_yesterday = tf.expand_dims(inputs[..., 6], -1)
         inputs_new = list([elev_diff, bias_recent, bias_yesterday])
         inputs_new = keras.layers.Concatenate(axis=-1)(inputs_new)
-        layer = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)
-        layer = maelstrom.layers.LeadtimeLayer(layer, num_leadtimes=self.num_leadtimes)
-        outputs = layer(inputs_new)
 
-        # outputs = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)(inputs_new)
+        if self.with_leadtime:
+            layer = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)
+            layer = maelstrom.layers.LeadtimeLayer(layer, num_leadtimes=self.num_leadtimes)
+            outputs = layer(inputs_new)
+        else:
+            outputs = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)(inputs_new)
 
         return outputs
 
