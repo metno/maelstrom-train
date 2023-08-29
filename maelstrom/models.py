@@ -495,7 +495,6 @@ class Unet(Model):
         layers = list()
 
         features = self._features
-        activation_layer = maelstrom.layers.get_activation(self._activation)
 
         if self._separable:
             Conv = maelstrom.layers.DepthwiseConv2D
@@ -504,20 +503,22 @@ class Unet(Model):
             conv_size = [self._conv_size, self._conv_size]
             up_pool_size = [self._pool_size, self._pool_size]
             up_conv_size = [1, self._conv_size, self._conv_size]
-            def Conv(output, features, conv_size, activation_layer, batch_normalization):
+            def Conv(output, features, conv_size, activation_name, batch_normalization):
                 for i in range(2):
                     output = maelstrom.layers.SeparableConv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormaliztion()(output)
+                    activation_layer = maelstrom.layers.get_activation(activation_name)
                     output = activation_layer(output)
                 return output
         else:
-            def Conv(output, features, conv_size, activation_layer, batch_normalization):
+            def Conv(output, features, conv_size, activation_name, batch_normalization):
                 for i in range(2):
                     output = keras.layers.Conv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormalization()(output)
                         # Activation should be after batch normalization
+                    activation_layer = maelstrom.layers.get_activation(activation_name)
                     output = activation_layer(output)
                 return output
 
@@ -529,7 +530,7 @@ class Unet(Model):
         # Downsampling
         # conv -> conv -> max_pool
         for i in range(self._layers - 1):
-            outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
             layers += [outputs]
             # print(i, outputs.shape)
 
@@ -542,7 +543,7 @@ class Unet(Model):
             features *= 2
 
         # conv -> conv
-        outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
+        outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
         for i in range(self._layers - 2, -1, -1):
@@ -552,7 +553,7 @@ class Unet(Model):
                 # The original paper used this kind of upsampling
                 UpConv = keras.layers.UpSampling3D
                 outputs = keras.layers.Conv3D(features, up_pool_size,
-                        activation=activation_layer, padding="same")(
+                        activation=self._activation, padding="same")(
                     outputs
                 )
                 outputs = UpConv(pool_size)(outputs)
@@ -563,7 +564,7 @@ class Unet(Model):
                 outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
 
             outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
-            outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
         # Dense layer at the end
         if self._with_leadtime:
@@ -606,11 +607,11 @@ class Dense(Model):
 
     def get_layers(self):
         layers = list()
-        activation_layer = maelstrom.layers.get_activation(self._activation)
         for i in range(self._num_layers - 1):
             layers += [keras.layers.Dense(self._num_features)]
             if self._batch_normalization:
-                layers += [keras.layers.BatchNormalization()]
+                layers += [keras.layers.BatchNormalization(momentum=0.9)]
+            activation_layer = maelstrom.layers.get_activation(self._activation)
             layers += [activation_layer]
         layers += [
             keras.layers.Dense(self._num_outputs, activation=self._final_activation)
