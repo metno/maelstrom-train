@@ -457,6 +457,7 @@ class Unet(Model):
         with_leadtime=False,
         batch_normalization=False,
         downsampling_type="max",
+        activation="relu",
     ):
         """U-net
 
@@ -480,6 +481,7 @@ class Unet(Model):
         self._separable = separable
         self._batch_normalization = batch_normalization
         self._downsampling_type = downsampling_type
+        self._activation = activation
 
         if downsampling_type not in ["max", "mean"]:
             raise ValuerError(f"Unknown downsampling type {downsampling_type}")
@@ -493,6 +495,7 @@ class Unet(Model):
         layers = list()
 
         features = self._features
+        activation_layer = maelstrom.layers.get_activation(self._activation)
 
         if self._separable:
             Conv = maelstrom.layers.DepthwiseConv2D
@@ -501,21 +504,21 @@ class Unet(Model):
             conv_size = [self._conv_size, self._conv_size]
             up_pool_size = [self._pool_size, self._pool_size]
             up_conv_size = [1, self._conv_size, self._conv_size]
-            def Conv(output, features, conv_size, activation, batch_normalization):
+            def Conv(output, features, conv_size, activation_layer, batch_normalization):
                 for i in range(2):
                     output = maelstrom.layers.SeparableConv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormaliztion()(output)
-                    output = keras.layers.Activation(activation)(output)
+                    output = activation_layer(output)
                 return output
         else:
-            def Conv(output, features, conv_size, activation, batch_normalization):
+            def Conv(output, features, conv_size, activation_layer, batch_normalization):
                 for i in range(2):
                     output = keras.layers.Conv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
                         output = keras.layers.BatchNormalization()(output)
                         # Activation should be after batch normalization
-                    output = keras.layers.Activation(activation)(output)
+                    output = activation_layer(output)
                 return output
 
             pool_size = [1, self._pool_size, self._pool_size]
@@ -526,7 +529,7 @@ class Unet(Model):
         # Downsampling
         # conv -> conv -> max_pool
         for i in range(self._layers - 1):
-            outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
             layers += [outputs]
             # print(i, outputs.shape)
 
@@ -539,7 +542,7 @@ class Unet(Model):
             features *= 2
 
         # conv -> conv
-        outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
+        outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
         for i in range(self._layers - 2, -1, -1):
@@ -548,7 +551,8 @@ class Unet(Model):
             if self._upsampling_type == "upsampling":
                 # The original paper used this kind of upsampling
                 UpConv = keras.layers.UpSampling3D
-                outputs = keras.layers.Conv3D(features, up_pool_size, activation="relu", padding="same")(
+                outputs = keras.layers.Conv3D(features, up_pool_size,
+                        activation=activation_layer, padding="same")(
                     outputs
                 )
                 outputs = UpConv(pool_size)(outputs)
@@ -559,7 +563,7 @@ class Unet(Model):
                 outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
 
             outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
-            outputs = Conv(outputs, features, conv_size, "relu", self._batch_normalization)
+            outputs = Conv(outputs, features, conv_size, activation_layer, self._batch_normalization)
 
         # Dense layer at the end
         if self._with_leadtime:
@@ -571,7 +575,6 @@ class Unet(Model):
             )
 
         return outputs
-
 
 class Dense(Model):
     """Fully connected dense model"""
@@ -602,7 +605,11 @@ class Dense(Model):
     def get_layers(self):
         layers = list()
         for i in range(self._num_layers - 1):
-            layers += [keras.layers.Dense(self._num_features, activation=self._activation)]
+            if self._activation == "leakyrelu":
+                layers += [keras.layers.Dense(self._num_features)]
+                layers += [keras.layers.LeakyReLU()]
+            else:
+                layers += [keras.layers.Dense(self._num_features, activation=self._activation)]
         layers += [
             keras.layers.Dense(self._num_outputs, activation=self._final_activation)
         ]
