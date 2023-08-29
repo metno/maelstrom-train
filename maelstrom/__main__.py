@@ -131,7 +131,7 @@ def main():
     quantiles = config["output"]["quantiles"]
     num_outputs = len(quantiles)
 
-    validation_frequency = get_validation_frequency(config, loader, with_horovod)
+    validation_frequency = loader.get_frequency(config["training"]["validation_frequency"], with_horovod)
     if main_process:
         print(f"validation frequency: {validation_frequency} batches")
 

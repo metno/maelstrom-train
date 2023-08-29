@@ -890,3 +890,46 @@ class Loader:
             leadtime_index = sample_index % self.num_leadtimes
         # print(batch, sample, sample_index, leadtime_index)
         return self.leadtimes[leadtime_index]
+
+    def get_frequency(self, freq, with_horovod=False):
+        """ Computes the number of batches corresponding to a frequency specification
+
+        Args:
+            freq (str|int): Either a number of batches, or a string of the form "number units"
+                where units is one of "epoch", "file", "batch"
+            with_horovod (bool): True if we are running with horovod
+
+        Returns:
+            freq (int): Frequency in number of batches
+        """
+        if freq is None:
+            raise ValueError("Frequency cannot be None")
+
+        words = freq.split(" ")
+        if len(words) == 1:
+            freq = int(words[0])
+            freq_units = "batch"
+        else:
+            if len(words) != 2:
+                raise ValueError(
+                    "must be in the form <value> <unit>"
+                )
+            freq, freq_units = words
+            freq = int(freq)
+        if freq_units == "epoch":
+            output_frequency = self.num_batches * freq
+        elif freq_units == "file":
+            output_frequency = self.num_batches_per_file * freq
+            # The convept of "file" needs to be handled differently when horovod processes several
+            # files in parallel. The most intuitive would be that if we want validation every 36
+            # files, and 4 are run in parallel, we should validated every 9 files relative to one
+            # process's data loader.
+            if with_horovod:
+                output_frequency //= hvd.size()
+        elif freq_units == "batch":
+            output_frequency = freq
+        else:
+            raise ValueError(
+                f"Unknown frequency units '{freq_units}'"
+            )
+        return output_frequency
