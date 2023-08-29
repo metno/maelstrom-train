@@ -552,8 +552,9 @@ class Unet(Model):
             if self._upsampling_type == "upsampling":
                 # The original paper used this kind of upsampling
                 UpConv = keras.layers.UpSampling3D
+                activation_layer = maelstrom.layers.get_activation(self._activation)
                 outputs = keras.layers.Conv3D(features, up_pool_size,
-                        activation=self._activation, padding="same")(
+                        activation=activation_layer, padding="same")(
                     outputs
                 )
                 outputs = UpConv(pool_size)(outputs)
