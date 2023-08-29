@@ -587,6 +587,7 @@ class Dense(Model):
         features,
         activation="relu",
         final_activation="linear",
+        batch_normalization=False,
     ):
         """
         Args:
@@ -600,16 +601,17 @@ class Dense(Model):
         self._num_features = features
         self._activation = activation
         self._final_activation = final_activation
+        self._batch_normalization = batch_normalization
         super().__init__(new_input_shape, num_outputs)
 
     def get_layers(self):
         layers = list()
+        activation_layer = maelstrom.layers.get_activation(self._activation)
         for i in range(self._num_layers - 1):
-            if self._activation == "leakyrelu":
-                layers += [keras.layers.Dense(self._num_features)]
-                layers += [keras.layers.LeakyReLU()]
-            else:
-                layers += [keras.layers.Dense(self._num_features, activation=self._activation)]
+            layers += [keras.layers.Dense(self._num_features)]
+            if self._batch_normalization:
+                layers += [keras.layers.BatchNormalization()]
+            layers += [activation_layer]
         layers += [
             keras.layers.Dense(self._num_outputs, activation=self._final_activation)
         ]
