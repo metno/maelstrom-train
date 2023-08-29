@@ -1,4 +1,4 @@
-# Experiment2: Test different learning rates
+# Experiment2: Test cosine decay restarts
 training:
     trainer:
         type: keras
@@ -6,8 +6,8 @@ training:
         type: adam
         learning_rate:
             type: cosinedecayrestarts
-            initial_learning_rate: 1.0e-2
-            first_decay_steps: 6372
+            initial_learning_rate: 1.0e-1
+            # first_decay_steps: 6372
             t_mul: 1.0
             m_mul: 1.0
     num_epochs: 1
