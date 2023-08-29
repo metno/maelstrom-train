@@ -33,6 +33,24 @@ def get(**kwargs):
     return layer
 
 
+def get_activation(name, *args, **kwargs):
+    """Get an activation layer corresponding to the name
+
+    Args:
+        name (str): Name of layer
+        args (list): List of arguments to layer
+        kwargs (dict): Named arguments to layer
+
+    Returns:
+        keras.layer.Layer: An initialized layer
+    """
+
+    if name.lower() == "leakyrelu":
+        return keras.layers.LeakyReLU(*args, **kwargs)
+    else:
+        return keras.layers.Activation(name)
+
+
 class LeadtimeLayer(keras.layers.Layer):
     """A layer that wraps an existing layer and runs it separately for each leadtime"""
 
