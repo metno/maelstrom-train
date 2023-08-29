@@ -32,6 +32,24 @@ models:
       pool_size: 4
       # separable: True
       # batch_normalization: True
+    - type: Unet
+      name: unet_f16_l3_c1_p4_dmean
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 4
+      downsampling_type: mean
+      # separable: True
+      # batch_normalization: True
+    - type: Unet
+      name: unet_f16_l3_c1_p4_leaky
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 4
+      # separable: True
+      # batch_normalization: True
+      activation: leakyrelu
     - type: Dense
       name: dense_f12_l6
       features: 12
