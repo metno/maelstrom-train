@@ -4,7 +4,12 @@ from tensorflow import keras
 import maelstrom
 
 
-def get(**kwargs):
+def get(batches_per_epoch, **kwargs):
+    """
+    Args:
+        batches_per_epoch (int): Number of batches for one epoch
+        kwargs (dict): Arguments to optimizer
+    """
     if "type" not in kwargs:
         raise ValueError("'type' is a required keyword of optimizer")
 
@@ -12,6 +17,9 @@ def get(**kwargs):
     name = name.lower()
     args = {k: v for k, v in kwargs.items() if k not in ["type", "learning_rate"]}
     if "learning_rate" in kwargs:
+        # Set to one epoch if not specified
+        if "first_decay_steps" not in kwargs["learning_rate"]:
+            kwargs["learning_rate"]["first_decay_steps"] = batches_per_epoch
         args["learning_rate"] = get_learning_rate(kwargs["learning_rate"])
     if name == "adam":
         optimizer = keras.optimizers.Adam(**args)

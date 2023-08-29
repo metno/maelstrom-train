@@ -131,6 +131,10 @@ def main():
     quantiles = config["output"]["quantiles"]
     num_outputs = len(quantiles)
 
+    validation_frequency = get_validation_frequency(config, loader, with_horovod)
+    if main_process:
+        print(f"validation frequency: {validation_frequency} batches")
+
     loss = maelstrom.loss.get(config["loss"], quantiles)
     metrics = []
     if loss not in [maelstrom.loss.mae, maelstrom.loss.mae_prob]:
@@ -159,7 +163,7 @@ def main():
         "%N", model_name
     )
 
-    optimizer = maelstrom.optimizer.get(**config["training"]["optimizer"])
+    optimizer = maelstrom.optimizer.get(validation_frequency, **config["training"]["optimizer"])
     if with_horovod:
         optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
                 average_aggregated_gradients=True)
@@ -197,10 +201,6 @@ def main():
         for section in config.keys():
             if section not in ["models"]:
                 logger.add("Config", section.capitalize(), config[section])
-
-    validation_frequency = get_validation_frequency(config, loader, with_horovod)
-    if main_process:
-        print(f"validation frequency: {validation_frequency} batches")
 
     # Set up callbacks
     callbacks = list()
