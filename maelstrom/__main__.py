@@ -225,13 +225,11 @@ def main():
     kwargs = {}
     if do_validation:
         kwargs["validation_data"] = dataset_val
-        keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
-        if with_horovod:
-            kwargs["verbose"] = main_process
-        kwargs["steps_per_epoch"] = validation_frequency
-    else:
-        keras_epochs = epochs
-        kwargs["steps_per_epoch"] = loader.num_batches
+
+    keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
+    kwargs["steps_per_epoch"] = validation_frequency
+    if with_horovod:
+        kwargs["verbose"] = main_process
 
     # if do_validation:
     #     keras_epochs = int(epochs * loader.num_batches // (validation_frequency))
