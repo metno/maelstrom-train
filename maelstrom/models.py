@@ -115,6 +115,7 @@ class Model(keras.Model):
 
 
 class SelectPredictor(Model):
+    """This model selects a set of predictors from the input and passes straight to the output"""
     def __init__(
         self,
         input_shape,
@@ -140,6 +141,58 @@ class SelectPredictor(Model):
                 (outputs, tf.expand_dims(inputs[..., self._indices[i]], axis=-1)),
                 axis=-1,
             )
+        return outputs
+
+
+class ElevCorr(Model):
+    """This model performs an elevation correction on the raw input data"""
+    def __init__(
+        self,
+        input_shape,
+        num_outputs,
+        indices,
+        index_altitude,
+        index_model_altitude,
+        elev_gradient=None,
+    ):
+        """
+        Args:
+            indices (list): List of indicies into the predictor dimension for selecting raw predictors
+            index_altitude (int): What position is the altitude preditor in?
+            index_model_altitude (int): What position is the model_altitude preditor in?
+            elev_gradient (float): What is the elevation gradient? If None, compute using linear regression
+        """
+        if len(indices) == 0:
+            raise ValueError("Needs at least one index")
+        max_index = np.max(indices)
+        if max_index > input_shape[-1]:
+            raise ValueError(
+                f"Max index ({max_index}) is larger than the number of predictors ({input_shape[-1]})"
+            )
+        self._indices = indices
+        self._index_altitude = index_altitude
+        self._index_model_altitude = index_model_altitude
+        self._elev_gradient = elev_gradient
+
+        new_input_shape = get_input_size(input_shape, False, False)
+        super().__init__(new_input_shape, num_outputs)
+
+    def get_outputs(self, inputs):
+        elev_diff = inputs[..., self._index_model_altitude] - inputs[..., self._index_altitude]
+        elev_diff = tf.expand_dims(elev_diff, -1)
+        if self._elev_gradient is None:
+            diff = keras.layers.Dense(1, use_bias=False)(elev_diff)
+        else:
+            diff = elev_diff * self._elev_gradient
+
+        outputs = list()
+        for i in range(len(self._indices)):
+            curr = inputs[..., self._indices[i]]
+            curr = tf.expand_dims(curr, axis=-1)
+            curr = tf.add(curr, diff)
+            outputs += [curr]
+        outputs = keras.layers.concatenate(outputs, axis=-1)
+
         return outputs
 
 

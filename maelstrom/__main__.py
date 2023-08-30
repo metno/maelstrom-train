@@ -428,11 +428,18 @@ def get_model(loader, num_outputs, configs, model, multi=False):
         if name.lower() == model.lower():
             args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
-            if args["type"].lower() == "selectpredictor":
+            if args["type"].lower() in ["selectpredictor", "elevcorr"]:
                 args["indices"] = list()
                 for predictor_name in args["predictor_names"]:
                     args["indices"] += [loader.predictor_names.index(predictor_name)]
                 del args["predictor_names"]
+
+                if "predictor_name_altitude" in args:
+                    args["index_altitude"] = loader.predictor_names.index(args["predictor_name_altitude"])
+                    del args["predictor_name_altitude"]
+                if "predictor_name_model_altitude" in args:
+                    args["index_model_altitude"] = loader.predictor_names.index(args["predictor_name_model_altitude"])
+                    del args["predictor_name_model_altitude"]
 
             if multi:
                 with strategy.scope():
