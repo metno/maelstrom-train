@@ -23,7 +23,7 @@ def get(name, args, logger=None, model=None, output_folder=None):
         return tf.keras.callbacks.EarlyStopping(**args)
     elif name == "weights":
         if output_folder is None:
-            raise ValueError("Convergence callback requires output_folder")
+            raise ValueError("Weights callback requires output_folder")
         filename = args["filename"]
         filename = f"{output_folder}/{filename}"
         return WeightsCallback(model, filename)
@@ -36,18 +36,16 @@ def get(name, args, logger=None, model=None, output_folder=None):
         return Convergence(**args)
     elif name == "timing":
         return Timing(logger)
-    elif name == "weights":
-        filename = args["filename"]
-        filename = f"{output_folder}/{filename}"
-        return WeightsCallback(model, filename)
     elif name == "checkpoint":
-        checkpoint_metric = 'val_loss'
+        monitor = 'val_loss'
+        if "monitor" in args:
+            monitor = args["monitor"]
 
         checkpoint_filepath = f"{output_folder}/checkpoint"
         model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_filepath,
             save_weights_only=True,
-            monitor=checkpoint_metric,
+            monitor=monitor,
             verbose=1,
             mode='min',
             save_best_only=True
@@ -69,7 +67,7 @@ def get_from_config(config, logger, model, output_folder):
 
 def get_default(logger, model, output_folder):
     callbacks = list()
-    callbacks += [get("checkpoint", {}, output_folder=output_folder)]
+    # callbacks += [get("checkpoint", {}, output_folder=output_folder)]
     callbacks += [get("timing", {}, logger=logger)]
     callbacks += [get("convergence", {"filename": "loss.txt"}, output_folder=output_folder)]
     # callbacks += [get("weights", {"filename": "weights.txt"}, model=model, output_folder=output_folder)]
@@ -157,6 +155,11 @@ class WeightsCallback(tf.keras.callbacks.Callback):
 
         self.curr_batch_weights = list()
         self.curr_batch_metrics = dict()
+
+        for layer in self.model.layers:
+            weights = layer.get_weights()
+            if len(weights) > 0:
+                print(weights)
 
     def on_test_begin(self, logs=None):
         pass

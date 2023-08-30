@@ -210,6 +210,13 @@ def main():
             callbacks += [hvd.keras.callbacks.MetricAverageCallback()]
         if main_process:
             callbacks += maelstrom.callback.get_from_config(config, logger, model, output_folder)
+            if do_validation:
+                monitor = "val_loss"
+            else:
+                monitor = "loss"
+            checkpoint_callback = maelstrom.callback.get("checkpoint", {"monitor": monitor},
+                output_folder=output_folder)
+            callbacks += [checkpoint_callback]
 
     s_time = time.time()
 
