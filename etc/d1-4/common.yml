@@ -50,6 +50,14 @@ models:
       # separable: True
       # batch_normalization: True
       activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l3_c1_p4_bn
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 4
+      # separable: True
+      batch_normalization: True
     - type: Dense
       name: dense_f12_l6
       features: 12
@@ -58,6 +66,11 @@ models:
     - type: SelectPredictor
       name: raw
       predictor_names: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+    - type: ElevCorr
+      name: raw_elev_corr
+      predictor_names: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+      predictor_name_altitude: altitude
+      predictor_name_model_altitude: model_altitude
     - type: Today
       with_leadtime: True
 output:
