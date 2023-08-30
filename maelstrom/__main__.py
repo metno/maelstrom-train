@@ -391,7 +391,7 @@ def main():
         maelstrom.util.print_cpu_usage("   Final CPU memory: ")
 
     if with_horovod:
-        horovod.tensorflow.shutdown()
+        hvd.shutdown()
 
 
 def get_loaders(config, with_horovod):
