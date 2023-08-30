@@ -310,9 +310,11 @@ def main():
 
             for key in training_results.keys():
                 logger.add("Scores", key, training_results[key][-1])
-        # TODO: Enable this
-        # if main_process:
-        #     model.load_weights(checkpoint_filepath)
+
+            # Load model weights after training
+            input_checkpoint_filepath = checkpoint_callback.filepath
+            print(f"Loading weights from {input_checkpoint_filepath}")
+            model.load_weights(input_checkpoint_filepath).expect_partial()
 
     if main_process:
         logger.add("Timing", "Training", "end_time", int(time.time()))
@@ -374,7 +376,9 @@ def main():
 
         if args.print_weights:
             for layer in model.layers:
-                print(layer.get_weights())
+                weights = layer.get_weights()
+                if len(weights) > 0:
+                    print(weights)
 
         # Add final information to logger
         total_runtime = time.time() - start_time
