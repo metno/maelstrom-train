@@ -45,6 +45,7 @@ class Loader:
         to_gpu=True,
         with_leadtime=True,
         with_horovod=False,
+        rank_split_strategy="blocks",
     ):
         """Initialize data loader
         
@@ -69,6 +70,7 @@ class Loader:
             to_gpu (bool): Move final tensors to GPU in the data processing pipeline
             with_leadtime (bool): Include leadtime dimension in one sample
             with_horovod (bool): Deal with horovod?
+            rank_split_strategy (str): How to split the dataset across ranks
         """
         self.debug = debug
         self.extra_features = extra_features
@@ -85,6 +87,7 @@ class Loader:
         self.num_parallel_calls = num_parallel_calls
         self.probabilistic_target = probabilistic_target
         self.with_horovod = with_horovod
+        self.rank_split_strategy = rank_split_strategy
 
         self.x_range = x_range
         self.y_range = y_range
@@ -108,22 +111,35 @@ class Loader:
         if self.with_horovod:
             if len(self.filenames) == 0:
                 raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
-            # Don't use random filenames, since then we cannot guarantee that the all files are used
-            # across the ranks
-            # I = np.argssort(np.random.rand(len(self.filenames)))
-            # self.filenames = [self.filenames[I[f]] for f in range(start, end))]
 
-            # Shard into hvd.size() blocks. This gives each rank a very seasonal subset, which is
-            # not ideal.
-            # start = hvd.rank() * math.ceil(len(self.filenames) // hvd.size())
-            # end = (hvd.rank() + 1 ) * math.ceil(len(self.filenames) // hvd.size())
-            # if end > len(self.filenames):
-            #     end = len(self.filenames)
-            # self.filenames = [self.filenames[f] for f in range(start, end)]
+            if self.rank_split_strategy == "random":
+                """ Randonly assign filenames to ranks. This isn't properly implemented, since we
+                are not guaranteed that all files are placed.
+                """
+                I = np.argssort(np.random.rand(len(self.filenames)))
+                self.filenames = [self.filenames[I[f]] for f in range(start, end)]
 
-            # Send every hvd.size()'th file to a given rank. This should give each rank a good mix
-            # of dates.
-            self.filenames = [self.filenames[f] for f in range(hvd.rank(), len(self.filenames), hvd.size())]
+            elif self.rank_split_strategy == "blocks":
+                """ Shard into hvd.size() blocks. This gives each rank a very seasonal subset. The
+                advantage with this is that we ensure every batch has one file from each season,
+                since gradients are average across ranks. It shouldn't be a problem that each rank
+                gets an inhomogenous dataset.
+                """
+                start = hvd.rank() * math.ceil(len(self.filenames) // hvd.size())
+                end = (hvd.rank() + 1) * math.ceil(len(self.filenames) // hvd.size())
+                if end > len(self.filenames):
+                    end = len(self.filenames)
+                self.filenames = [self.filenames[f] for f in range(start, end)]
+
+            elif self.rank_split_strategy == "interleaved":
+                """Send every hvd.size()'th file to a given rank. This should give each rank a good
+                mix of dates.
+                """
+                self.filenames = [self.filenames[f] for f in range(hvd.rank(), len(self.filenames), hvd.size())]
+
+            else:
+                raise ValueError(f"Invalid rank split strategy {self.rank_split_strategy}")
+
             if len(self.filenames) == 0:
                 raise Exception(f"Too few files ({len(self.filenames)}) to divide into {hvd.size()} processes")
 
