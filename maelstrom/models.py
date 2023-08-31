@@ -511,6 +511,7 @@ class Unet(Model):
         batch_normalization=False,
         downsampling_type="max",
         activation="relu",
+        skipcon=True,
     ):
         """U-net
 
@@ -535,6 +536,7 @@ class Unet(Model):
         self._batch_normalization = batch_normalization
         self._downsampling_type = downsampling_type
         self._activation = activation
+        self._skipcon = skipcon
 
         if downsampling_type not in ["max", "mean"]:
             raise ValuerError(f"Unknown downsampling type {downsampling_type}")
@@ -617,7 +619,8 @@ class Unet(Model):
                 UpConv = keras.layers.Conv3DTranspose
                 outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
 
-            outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
+            if i == 0 or self._skipcon:
+                outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
             outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
         # Dense layer at the end
