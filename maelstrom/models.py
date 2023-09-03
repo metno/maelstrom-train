@@ -603,21 +603,26 @@ class Unet(Model):
         # upconv -> concat -> conv -> conv
         for i in range(self._layers - 2, -1, -1):
             features /= 2
+            activation_layer = maelstrom.layers.get_activation(self._activation)
             # Upsampling
             if self._upsampling_type == "upsampling":
                 # The original paper used this kind of upsampling
                 UpConv = keras.layers.UpSampling3D
-                activation_layer = maelstrom.layers.get_activation(self._activation)
                 outputs = keras.layers.Conv3D(features, conv_size,
                         activation=activation_layer, padding="same")(
                     outputs
                 )
                 outputs = UpConv(pool_size)(outputs)
+                activation_layer = maelstrom.layers.get_activation(self._activation)
+                outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
+                        padding="same")(outputs)
             elif self._upsampling_type == "conv_transpose":
                 # Some use this kind of upsampling. This seems to create a checkered pattern in the
                 # output, at least for me.
                 UpConv = keras.layers.Conv3DTranspose
                 outputs = UpConv(features, up_conv_size, strides=pool_size, padding="same")(outputs)
+                outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
+                        padding="same")(outputs)
 
             if i == 0 or self._skipcon:
                 outputs = keras.layers.concatenate((layers[i], outputs), axis=-1)
