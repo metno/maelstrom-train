@@ -512,6 +512,7 @@ class Unet(Model):
         downsampling_type="max",
         activation="relu",
         skipcon=True,
+        feature_ratio=2,
     ):
         """U-net
 
@@ -537,6 +538,7 @@ class Unet(Model):
         self._downsampling_type = downsampling_type
         self._activation = activation
         self._skipcon = skipcon
+        self._feature_ratio = feature_ratio
 
         if downsampling_type not in ["max", "mean"]:
             raise ValuerError(f"Unknown downsampling type {downsampling_type}")
@@ -595,14 +597,14 @@ class Unet(Model):
                 outputs = keras.layers.MinPooling3D(pool_size=pool_size)(outputs)
             elif self._downsampling_type == "mean":
                 outputs = keras.layers.AveragePooling3D(pool_size=pool_size)(outputs)
-            features *= 2
+            features *= self._feature_ratio
 
         # conv -> conv
         outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
         # upconv -> concat -> conv -> conv
         for i in range(self._layers - 2, -1, -1):
-            features /= 2
+            features /= self._feature_ratio
             activation_layer = maelstrom.layers.get_activation(self._activation)
             # Upsampling
             if self._upsampling_type == "upsampling":
