@@ -513,6 +513,7 @@ class Unet(Model):
         activation="relu",
         skipcon=True,
         feature_ratio=2,
+        bn_momentum=0.99,
     ):
         """U-net
 
@@ -539,6 +540,7 @@ class Unet(Model):
         self._activation = activation
         self._skipcon = skipcon
         self._feature_ratio = feature_ratio
+        self._bn_momentum = bn_momentum
 
         if downsampling_type not in ["max", "mean"]:
             raise ValuerError(f"Unknown downsampling type {downsampling_type}")
@@ -564,7 +566,7 @@ class Unet(Model):
                 for i in range(2):
                     output = maelstrom.layers.SeparableConv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
-                        output = keras.layers.BatchNormaliztion()(output)
+                        output = keras.layers.BatchNormalization(momentum=self._bn_momentum, scale=False, center=False)(output)
                     activation_layer = maelstrom.layers.get_activation(activation_name)
                     output = activation_layer(output)
                 return output
@@ -573,7 +575,7 @@ class Unet(Model):
                 for i in range(2):
                     output = keras.layers.Conv3D(features, conv_size, padding="same")(output)
                     if batch_normalization:
-                        output = keras.layers.BatchNormalization()(output)
+                        output = keras.layers.BatchNormalization(momentum=self._bn_momentum, scale=False, center=False)(output)
                         # Activation should be after batch normalization
                     activation_layer = maelstrom.layers.get_activation(activation_name)
                     output = activation_layer(output)
