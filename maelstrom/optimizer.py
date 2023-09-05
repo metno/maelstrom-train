@@ -99,6 +99,10 @@ def get_learning_rate(args):
             learning_rate = keras.optimizers.schedules.CosineDecayRestarts(
                 **curr_args
             )
+        elif name == "cosinedecay":
+            learning_rate = keras.optimizer.schedules.CosineDecay(
+                    **curr_args
+            )
         else:
             raise ValueError(f"Unknown learning rate schedule {name}")
     else:
