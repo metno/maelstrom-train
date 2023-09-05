@@ -46,6 +46,7 @@ class Loader:
         with_leadtime=True,
         with_horovod=False,
         rank_split_strategy="blocks",
+        interleave_leadtime=False,
     ):
         """Initialize data loader
         
@@ -71,6 +72,7 @@ class Loader:
             with_leadtime (bool): Include leadtime dimension in one sample
             with_horovod (bool): Deal with horovod?
             rank_split_strategy (str): How to split the dataset across ranks
+            interleave_leadtime (bool): If True, then read leadtimes randomly
         """
         self.debug = debug
         self.extra_features = extra_features
@@ -88,6 +90,7 @@ class Loader:
         self.probabilistic_target = probabilistic_target
         self.with_horovod = with_horovod
         self.rank_split_strategy = rank_split_strategy
+        self.interleave_leadtime = interleave_leadtime
 
         self.x_range = x_range
         self.y_range = y_range
@@ -204,9 +207,14 @@ class Loader:
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
 
-        dataset = tf.data.Dataset.range(self.num_files)
-        if randomize_order:
-            dataset = dataset.shuffle(len(self.filenames))
+        if self.interleave_leadtime:
+            dataset = tf.data.Dataset.range(self.num_files * self.num_leadtimes)
+            if randomize_order:
+                dataset = dataset.shuffle(len(self.filenames * self.num_leadtimes))
+        else:
+            dataset = tf.data.Dataset.range(self.num_files)
+            if randomize_order:
+                dataset = dataset.shuffle(len(self.filenames))
 
         if shard_size is not None:
             # start = shard_index * math.ceil(self.num_files // shard_size)
@@ -430,34 +438,41 @@ class Loader:
     """
     Functions used by the data processing pipeline
     """
-    @maelstrom.map_decorator1_to_3
+    @maelstrom.map_decorator1_to_4
     def read(self, index):
         """Read data from NetCDF
 
         Args:
             index (int): Read data from this index
-            leadtimes (list): Only read these leadtimes. If None, read all
 
         Returns:
             predictors (tf.tensor): Predictors tensor (leadtime, y, x, predictor)
             static_predictors (tf.tensor): Satic predictor tensor (y, x, static_predictor)
             targets (tf.tensor): Targets tensor (leadtime, y, x, 1)
+            leadtimes (tf.tensor): Leadtime tensor
         """
         s_time = time.time()
         index = index.numpy()
         self.print(f"Start reading index={index}")
 
+        if self.interleave_leadtime:
+            tindex = index // self.num_leadtimes
+            lindex = [index % self.num_leadtimes]
+        else:
+            tindex = index
+            lindex = Ellipsis
+
         with tf.device(self.device):
             if not self.create_fake_data:
-                predictors = self.data["predictors"][index, ...]
-                static_predictors = self.data["static_predictors"][index, ...]
+                predictors = self.data["predictors"][tindex, lindex, ...]
+                static_predictors = self.data["static_predictors"][tindex, ...]
 
                 if self.probabilistic_target:
-                    mean = np.expand_dims(self.data["target_mean"][index, ...], -1)
-                    std = np.expand_dims(self.data["target_std"][index, ...], -1)
+                    mean = np.expand_dims(self.data["target_mean"][tindex, lindex, ...], -1)
+                    std = np.expand_dims(self.data["target_std"][tindex, lindex, ...], -1)
                     targets = np.concatenate((mean, std), -1)
                 else:
-                    targets = self.data["target_mean"][index, ...]
+                    targets = self.data["target_mean"][tindex, lindex, ...]
                     targets = np.expand_dims(targets, -1)
 
                 # Force explicit conversion here, so that we can account the time it takes
@@ -471,11 +486,13 @@ class Loader:
                 static_predictors = tf.random.uniform(self.static_predictor_shape)
         e_time = time.time()
         self.timing["read"] += e_time - s_time
-        # print(predictors.shape, static_predictors.shape, targets.shape)
-        return predictors, static_predictors, targets
 
-    @maelstrom.map_decorator3_to_4
-    def expand_static_predictors(self, predictors, static_predictors, targets):
+        leadtimes = self.leadtimes[lindex]
+        # print(predictors.shape, static_predictors.shape, targets.shape, leadtimes.shape)
+        return predictors, static_predictors, targets, leadtimes
+
+    @maelstrom.map_decorator4_to_4
+    def expand_static_predictors(self, predictors, static_predictors, targets, leadtimes):
         """Copies static predictors to leadtime dimension. Also subsets spatially."""
         s_time = time.time()
         self.print("Start processing")
@@ -489,7 +506,6 @@ class Loader:
             static_predictors = tf.tile(static_predictors, shape)
 
         self.timing["expand"] += time.time() - s_time
-        leadtimes = self.leadtimes
         return predictors, static_predictors, targets, leadtimes
 
     @maelstrom.map_decorator4_to_2

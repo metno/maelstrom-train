@@ -47,6 +47,16 @@ def map_decorator1_to_3(func):
                 )
     return wrapper
 
+def map_decorator1_to_4(func):
+    """Decorator to wrap a 1-argument function as a tf.py_function"""
+    def wrapper(self, i):
+        return tf.py_function(
+                lambda i: func(self, i),
+                inp=(i,),
+                Tout=(tf.float32, tf.float32, tf.float32, tf.float32)
+                )
+    return wrapper
+
 def map_decorator2_to_2(func):
     """Decorator to wrap a 2-argument function as a tf.py_function"""
     def wrapper(self, i, j):
@@ -83,6 +93,16 @@ def map_decorator3_to_4(func):
         return tf.py_function(
                 lambda i, j, k: func(self, i, j, k),
                 inp=(i, j, k),
+                Tout=(tf.float32, tf.float32, tf.float32, tf.float32)
+                )
+    return wrapper
+
+def map_decorator4_to_4(func):
+    """Decorator to wrap a 2-argument function as a tf.py_function"""
+    def wrapper(self, i, j, k, l):
+        return tf.py_function(
+                lambda i, j, k, l: func(self, i, j, k, l),
+                inp=(i, j, k, l),
                 Tout=(tf.float32, tf.float32, tf.float32, tf.float32)
                 )
     return wrapper
