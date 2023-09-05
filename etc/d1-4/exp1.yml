@@ -7,8 +7,8 @@ training:
         type: adam
         learning_rate:
             type: piecewise
-            boundaries: [100] # Number of samples (not epochs)
+            boundaries: [1000] # Number of samples (not epochs)
             values: [1.0e-2, 1.0e-3]
-    num_epochs: 3
+    num_epochs: 1
     # validation_frequency: 1 epoch
     validation_frequency: 36 file

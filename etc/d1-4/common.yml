@@ -4,8 +4,13 @@ models:
     - type: BasicBenchmark
       name: cnn
       leadtime_dependent: False
-      neighbourhood_size: 3
+      conv_size: 3
       filter_sizes: [12, 5, 5]
+    - type: BasicBenchmark
+      name: cnn_f5_l4_c3
+      leadtime_dependent: False
+      conv_size: 3
+      filter_sizes: [5, 5, 5, 5]
     - type: Unet
       name: unet_f16_l6_c3_p2
       features: 16
@@ -18,6 +23,20 @@ models:
       layers: 6
       conv_size: 1
       pool_size: 2
+    - type: Unet
+      name: unet_f16_l6_c1_p2_tanh
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: tanh
+    - type: Unet
+      name: unet_f16_l6_c1_p2_linear
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: linear
     - type: Unet
       name: unet_f16_l3_c3_p4
       features: 16
@@ -33,14 +52,111 @@ models:
       # separable: True
       # batch_normalization: True
     - type: Unet
-      name: unet_f16_l3_c1_p4_dmean
+      name: unet_f16_l6_c1_p2_dmean
       features: 16
-      layers: 3
+      layers: 6
       conv_size: 1
-      pool_size: 4
+      pool_size: 2
       downsampling_type: mean
       # separable: True
       # batch_normalization: True
+    - type: Unet
+      name: unet_f16_l6_c1_p2_leaky
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_leaky
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c3_p2_f1_leaky
+      features: 16
+      layers: 6
+      conv_size: 3
+      pool_size: 2
+      feature_ratio: 1
+      activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_leaky
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c3_p2_leaky
+      features: 16
+      layers: 6
+      conv_size: 3
+      pool_size: 2
+      activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_elu
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: elu
+    - type: Unet
+      name: unet_f4_l6_c1_p2_elu
+      features: 4
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: elu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_elu
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: elu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_elu_bn
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: elu
+      batch_normalization: True
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_elu_bn_m99995
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: elu
+      batch_normalization: True
+      bn_momentum: 0.99995
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_elu_bn_m9995
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: elu
+      batch_normalization: True
+      bn_momentum: 0.9995
+    - type: Unet
+      name: unet_f16_l6_c1_p2_f1_elu_noskipcon
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: elu
+      skipcon: False
     - type: Unet
       name: unet_f16_l3_c1_p4_leaky
       features: 16
@@ -57,6 +173,22 @@ models:
       conv_size: 1
       pool_size: 4
       # separable: True
+      batch_normalization: True
+    - type: Unet
+      name: unet_f16_l3_c1_p4_bn_elu
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 4
+      # separable: True
+      batch_normalization: True
+      activation: elu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_bn
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
       batch_normalization: True
     - type: Dense
       name: dense_f12_l6

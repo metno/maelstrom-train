@@ -8,17 +8,32 @@ parameterset:
       - name: loader
         type: string
         # _: "_raw"
-        # _: ""
-        _: "_today"
+        _: ""
+        # _: "_ta"
+        # _: "_b12"
+        # _: "_today"
       - name: experiment
         type: string
-        _: exp2
+        _: exp4
         #_: raw
       - name: model
         type: string
-        # _: unet_f16_l3_c1_p4
-        _: today
-        # _: dense_f12_l6
+        # _: unet_f16_l6_c1_p2
+        # _: unet_f16_l6_c1_p2
+        # _: unet_f16_l6_c1_p2_elu
+        # _: unet_f16_l6_c1_p2_f1_elu
+        # _: unet_f16_l6_c1_p2_leaky, unet_f16_l6_c3_p2_leaky
+        # _: unet_f16_l6_c1_p2_leaky, unet_f16_l6_c3_p2_leaky
+        _: unet_f16_l6_c3_p2_f1_leaky
+        # _: unet_f16_l6_c1_p2_f1_elu
+        # _: unet_f16_l6_c1_p2_f1_elu_bn
+        # _: unet_f16_l6_c1_p2_f1_elu_bn_m9995
+        # _: unet_f16_l3_c1_p4_bn_elu
+        # _: cnn_f5_l4_c3
+        # _: unet_f16_l3_c1_p4_leaky
+        # _: today
+        # _: dense_f12_l6, unet_f16_l6_c1_p2
+        # _: raw_elev_corr
         # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, unet_f16_l3_c1_p4, dense_f12_l6
         # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, dense_f12_l6
         # _: raw
@@ -44,12 +59,12 @@ parameterset:
         _: 0 # ,1,2
       - name: config_files
         type: string
-        tag: "!test"
+        # tag: "!test"
         _: "${homedir}/etc/d1-4/${experiment}.yml ${homedir}/etc/d1-4/loader${loader}.yml ${homedir}/etc/d1-4/common.yml"
-      - name: config_file
-        type: string
-        tag: "test"
-        _: ${homedir}/etc/d1-4/exp${experiment}_debug.yml
+        # - name: config_file
+        # type: string
+        # tag: "test"
+        # _: ${homedir}/etc/d1-4/exp${experiment}_debug.yml
   - name: trainParameters
     parameter:
       - name: mode
@@ -149,7 +164,11 @@ parameterset:
         type: int
         _:  $n_cpu // $n_procs
       - name: timelimit
-        _: "03:00:00"
+        tag: "!test"
+        _: "06:00:00"
+      - name: timelimit
+        tag: "test"
+        _: "01:30:00"
       - name: account
         tag: jwb|jwc
         _: deepacf

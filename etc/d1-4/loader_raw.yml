@@ -1,7 +1,7 @@
 # Raw experiment: Create raw forecast
 loader:
     type: file
-    filenames: [ "data/air_temperature/5TB/2020030[1-4]T*Z.nc"]  # One file
+    # filenames: [ "data/air_temperature/5TB/2020030[1-4]T*Z.nc"]  # One file
     # filenames: [ "data/air_temperature/5TB/2020*1T*Z.nc"]    # 36 files
     # filenames: [ "data/air_temperature/5TB/202*01T*Z.nc"]    # 24 files
     filenames: [ "data/air_temperature/5TB/2020*T*Z.nc", "data/air_temperature/5TB/20210[12]*T*Z.nc"]
@@ -31,7 +31,7 @@ loader:
                 "data/air_temperature/5TB/20220216T*Z.nc"
     ]
     predict_diff: False
-    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m", "altitude", "model_altitude"]
     patch_size: 512
     batch_size: 1
     with_leadtime: False
@@ -64,7 +64,7 @@ loader_validation:
                 "data/air_temperature/5TB/20220202T*Z.nc",
                 "data/air_temperature/5TB/20220216T*Z.nc"
     ]
-    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m", "altitude", "model_altitude"]
     batch_size: 1
     predict_diff: False
     with_leadtime: False
@@ -77,7 +77,7 @@ loader_test:
     filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
                 "data/air_temperature/5TB/20211*T*Z.nc",
                 "data/air_temperature/5TB/2022*T*Z.nc"]
-    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+    limit_predictors: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m", "altitude", "model_altitude"]
     batch_size: 1
     predict_diff: False
     with_leadtime: False

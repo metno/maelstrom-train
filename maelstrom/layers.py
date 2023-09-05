@@ -47,6 +47,7 @@ def get_activation(name, *args, **kwargs):
 
     if name.lower() == "leakyrelu":
         return keras.layers.LeakyReLU(*args, **kwargs)
+        # return keras.layers.LeakyReLU(alpha=0.05)
     else:
         return keras.layers.Activation(name)
 
