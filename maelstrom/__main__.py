@@ -440,17 +440,22 @@ def get_model(loader, num_outputs, configs, model, multi=False):
             args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
             if args["type"].lower() in ["selectpredictor", "elevcorr"]:
-                args["indices"] = list()
-                for predictor_name in args["predictor_names"]:
-                    args["indices"] += [loader.predictor_names.index(predictor_name)]
-                del args["predictor_names"]
+                # Allow either "indices" or "predictor_names". Both are needed, because when we inspect a
+                # model after it has been run, indices are stored in the output config.
+                if "indices" not in args:
+                    args["indices"] = list()
+                    for predictor_name in args["predictor_names"]:
+                        args["indices"] += [loader.predictor_names.index(predictor_name)]
+                    del args["predictor_names"]
 
-                if "predictor_name_altitude" in args:
-                    args["index_altitude"] = loader.predictor_names.index(args["predictor_name_altitude"])
-                    del args["predictor_name_altitude"]
-                if "predictor_name_model_altitude" in args:
-                    args["index_model_altitude"] = loader.predictor_names.index(args["predictor_name_model_altitude"])
-                    del args["predictor_name_model_altitude"]
+                if "index_altitude" not in args:
+                    if "predictor_name_altitude" in args:
+                        args["index_altitude"] = loader.predictor_names.index(args["predictor_name_altitude"])
+                        del args["predictor_name_altitude"]
+                if "index_model_altitude" not in args:
+                    if "predictor_name_model_altitude" in args:
+                        args["index_model_altitude"] = loader.predictor_names.index(args["predictor_name_model_altitude"])
+                        del args["predictor_name_model_altitude"]
 
             if multi:
                 with strategy.scope():
