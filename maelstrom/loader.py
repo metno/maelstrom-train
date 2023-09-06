@@ -280,6 +280,9 @@ class Loader:
 
             # Unbatch the patch dimension
             dataset = dataset.unbatch()
+            if randomize_order:
+                dataset = dataset.shuffle(self.num_patches_per_file)
+
             # Predictor shape: 59, 256, 256, 14
         else:
             # Unbatch the leadtime dimension
@@ -289,6 +292,9 @@ class Loader:
             # Unbatch the patch dimension
             dataset = dataset.unbatch()
             # Predictor shape: 256, 256, 14
+
+            if randomize_order:
+                dataset = dataset.shuffle(self.num_patches_per_file * self.num_leadtimes)
 
             # Batch so that the dataset has 4 dimensions
             dataset = dataset.batch(1)
