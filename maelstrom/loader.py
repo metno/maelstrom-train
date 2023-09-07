@@ -169,6 +169,7 @@ class Loader:
         # Cache the normalization coefficients
         self.normalize_add = None
         self.normalize_factor = None
+        self.normalize_power = None
         self.coefficients = self.read_normalization()
 
 
@@ -563,6 +564,10 @@ class Loader:
             if self.normalize_add is None or self.normalize_factor is None:
                 a = self.coefficients[:, 0]
                 s = self.coefficients[:, 1]
+                p = None
+                if self.coefficients.shape[1] == 3:
+                    p = self.coefficients[:, 2]
+
                 shape = tf.concat((tf.shape(predictors)[0:-1], [1]), 0)
 
                 def expand_array(a, shape):
@@ -577,7 +582,11 @@ class Loader:
 
                 self.normalize_add = expand_array(a, shape)
                 self.normalize_factor = expand_array(s, shape)
+                if p is not None:
+                    self.normalize_power = expand_array(p, shape)
 
+            if self.normalize_power is not None:
+                predictors = predictors ** self.normalize_power
             predictors = predictors - self.normalize_add
             predictors = predictors / self.normalize_factor
 
@@ -858,24 +867,33 @@ class Loader:
     def read_normalization(self):
         ret = None
         if self.filename_normalization is not None:
-            ret = np.zeros([self.num_predictors, 2], np.float32)
-            ret[:, 1] = 1
             with open(self.filename_normalization) as file:
                 coefficients = yaml.load(file, Loader=yaml.SafeLoader)
+                first_coefficients = list(coefficients.items())[0][1]
+                with_power = len(first_coefficients) == 3
+
+                ret = np.ones([self.num_predictors, 2 + with_power], np.float32)
+                ret[:, 0] = 0
+                if with_power:
+                    default = [0, 1, 1]
+                else:
+                    default = [0, 1]
+
                 # Add normalization information for the extra features
-                for k,v in self.get_extra_features_normalization(self.extra_features).items():
+                for k,v in self.get_extra_features_normalization(self.extra_features, with_power).items():
                     coefficients[k] = v
 
                 for i, name in enumerate(self.predictor_names):
                     if name in coefficients:
                         ret[i, :] = coefficients[name]
                     elif name in self.extra_features:
-                        ret[i, :] = [0, 1]
+                        ret[i, :] = default
                     else:
-                        ret[i, :] = [0, 1]
+                        ret[i, :] = default
+        print(ret)
         return ret
 
-    def get_extra_features_normalization(self, extra_features):
+    def get_extra_features_normalization(self, extra_features, with_power):
         normalization = dict()
         X = self.num_x_input
         Y = self.num_y_input
@@ -892,6 +910,9 @@ class Loader:
             elif feature_type == "leadtime":
                 val = self.leadtimes
                 curr = [np.mean(val), np.std(val)]
+
+            if with_power:
+                curr = curr + [1]
 
             normalization[feature_name] = curr
         return normalization
