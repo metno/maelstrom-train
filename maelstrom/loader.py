@@ -294,7 +294,7 @@ class Loader:
             # Predictor shape: 256, 256, 14
 
             if randomize_order:
-                dataset = dataset.shuffle(self.num_patches_per_file * self.num_leadtimes)
+                dataset = dataset.shuffle(self.num_patches_per_file)
 
             # Batch so that the dataset has 4 dimensions
             dataset = dataset.batch(1)
