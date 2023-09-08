@@ -32,7 +32,7 @@ loader:
     ]
     predict_diff: True
     limit_predictors: ["air_temperature_2m", "air_temperature_0.1_2m", "air_temperature_0.9_2m", "altitude", "model_altitude", "bias_recent", "bias_yesterday"]
-    patch_size: 512
+    patch_size: 256
     batch_size: 1
     with_leadtime: True
     num_parallel_calls: 12

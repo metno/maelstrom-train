@@ -7,36 +7,27 @@ parameterset:
     parameter:
       - name: loader
         type: string
-        # _: "_raw"
+        # _: "_raw_full"
         _: ""
+        # _: "_basic"
         # _: "_ta"
         # _: "_b12"
         # _: "_today"
       - name: experiment
         type: string
-        _: exp4
-        #_: raw
+        # _: opt1
+        _: opt1_e1
+        # _: opt2
+        #_: optraw
       - name: model
         type: string
-        # _: unet_f16_l6_c1_p2
-        # _: unet_f16_l6_c1_p2
-        # _: unet_f16_l6_c1_p2_elu
-        # _: unet_f16_l6_c1_p2_f1_elu
-        # _: unet_f16_l6_c1_p2_leaky, unet_f16_l6_c3_p2_leaky
-        # _: unet_f16_l6_c1_p2_leaky, unet_f16_l6_c3_p2_leaky
-        _: unet_f16_l6_c3_p2_f1_leaky
-        # _: unet_f16_l6_c1_p2_f1_elu
-        # _: unet_f16_l6_c1_p2_f1_elu_bn
-        # _: unet_f16_l6_c1_p2_f1_elu_bn_m9995
-        # _: unet_f16_l3_c1_p4_bn_elu
-        # _: cnn_f5_l4_c3
-        # _: unet_f16_l3_c1_p4_leaky
-        # _: today
-        # _: dense_f12_l6, unet_f16_l6_c1_p2
+        # _: unet_f16_l6_c1_p2_leaky  # Benchmark
+        _: unet_f16_l6_c1_p2
+        # _: unet_f16_l6_c3_p2_leaky
+        # _: unet_f16_l6_c1_p2_leaky_dmean
+        # _: dense_f12_l6
         # _: raw_elev_corr
-        # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, unet_f16_l3_c1_p4, dense_f12_l6
-        # _: unet_f16_l6_c3_p2, unet_f16_l6_c1_p2, unet_f16_l3_c3_p4, dense_f12_l6
-        # _: raw
+        # _: today
       - name: homedir
         type: string
         # _: /p/home/jusers/nipen1/juwels/repos/maelstrom-train/

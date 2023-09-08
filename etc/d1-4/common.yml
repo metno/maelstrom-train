@@ -61,12 +61,13 @@ models:
       # separable: True
       # batch_normalization: True
     - type: Unet
-      name: unet_f16_l6_c1_p2_leaky
+      name: unet_f16_l6_c1_p2_leaky_nearest
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
       activation: leakyrelu
+      upsampling_type: upsampling_nearest
     - type: Unet
       name: unet_f16_l6_c1_p2_f1_leaky
       features: 16
@@ -84,6 +85,15 @@ models:
       feature_ratio: 1
       activation: leakyrelu
     - type: Unet
+      name: unet_f16_l3_c1_p2_f1_leaky
+      features: 16
+      layers: 3
+      conv_size: 1
+      pool_size: 2
+      feature_ratio: 1
+      activation: leakyrelu
+    - type: Unet
+      # This is the benchmark
       name: unet_f16_l6_c1_p2_leaky
       features: 16
       layers: 6
@@ -97,6 +107,14 @@ models:
       conv_size: 3
       pool_size: 2
       activation: leakyrelu
+    - type: Unet
+      name: unet_f16_l6_c1_p2_leaky_dmean
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: leakyrelu
+      downsampling_type: mean
     - type: Unet
       name: unet_f16_l6_c1_p2_elu
       features: 16
@@ -163,8 +181,6 @@ models:
       layers: 3
       conv_size: 1
       pool_size: 4
-      # separable: True
-      # batch_normalization: True
       activation: leakyrelu
     - type: Unet
       name: unet_f16_l3_c1_p4_bn
@@ -204,12 +220,13 @@ models:
       predictor_name_altitude: altitude
       predictor_name_model_altitude: model_altitude
     - type: Today
+      name: today
       with_leadtime: True
 output:
     quantiles: [0.1, 0.5, 0.9]
 loss:
     type: quantile_score
-    # trim: 10
+    trim: 32
 evaluators:
     - type: aggregator
 tensorflow:
