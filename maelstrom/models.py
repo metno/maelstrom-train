@@ -525,7 +525,7 @@ class Unet(Model):
             conv_size (int): Convolution size (> 0)
             with_leadtime (bool): Should the last layer be leadtime dependent?
         """
-        if upsampling_type not in ["upsampling", "conv_transpose"]:
+        if upsampling_type not in ["upsampling", "conv_transpose", "upsampling_nearest"]:
             raise ValueError(f"Unknown upsampling type {upsampling_type}")
 
         self._features = features
@@ -611,15 +611,24 @@ class Unet(Model):
             # Upsampling
             if self._upsampling_type == "upsampling":
                 # The original paper used this kind of upsampling
-                UpConv = keras.layers.UpSampling3D
                 outputs = keras.layers.Conv3D(features, conv_size,
                         activation=activation_layer, padding="same")(
                     outputs
                 )
+                UpConv = keras.layers.UpSampling3D
                 outputs = UpConv(pool_size)(outputs)
                 activation_layer = maelstrom.layers.get_activation(self._activation)
+                # Do a 2x2 convolution to simulate "learnable" bilinear interpolation
                 outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
                         padding="same")(outputs)
+            elif self._upsampling_type == "upsampling_nearest":
+                outputs = keras.layers.Conv3D(features, conv_size,
+                        activation=activation_layer, padding="same")(
+                    outputs
+                )
+                UpConv = keras.layers.UpSampling3D
+                outputs = UpConv(pool_size)(outputs)
+                # Don't do a 2x2 convolution
             elif self._upsampling_type == "conv_transpose":
                 # Some use this kind of upsampling. This seems to create a checkered pattern in the
                 # output, at least for me.
