@@ -251,16 +251,16 @@ class Loader:
             dataset = dataset.map(self.feature_extraction, num_parallel_calls)
             # Predictor shape: 1, 2321, 1796, 16
 
+            # Sutract the raw forecast from the targets
+            dataset = dataset.map(self.diff, num_parallel_calls)
+            # Predictor shape: 1, 2321, 1796, 16
+
             # Normalize the predictors
             dataset = dataset.map(self.normalize, num_parallel_calls)
             # Predictor shape: 1, 2321, 1796, 16
 
             # Split the y,x dimensions into patches of size 256x256
             dataset = dataset.map(self.patch, num_parallel_calls)
-            # Predictor shape: 1, 63, 256, 256, 16
-
-            # Sutract the raw forecast from the targets
-            dataset = dataset.map(self.diff, num_parallel_calls)
             # Predictor shape: 1, 63, 256, 256, 16
         else:
             # Perform the 4 above steps in one function
