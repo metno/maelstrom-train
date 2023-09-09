@@ -890,7 +890,6 @@ class Loader:
                         ret[i, :] = default
                     else:
                         ret[i, :] = default
-        print(ret)
         return ret
 
     def get_extra_features_normalization(self, extra_features, with_power):
