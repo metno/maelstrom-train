@@ -675,10 +675,11 @@ class Unet(Model):
                     outputs = keras.layers.concatenate((layers[i], outputs), axis=-1, name=f"L{i}_concat")
             outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
-        # Leadtime layer
+        # Create a separate branch with f(leadtime) multiplied by each bias field
         if self._leadtime_index is not None and len(self._bias_indices) > 0:
             leadtime_input = inputs[..., self._leadtime_index]
-            bias_inputs = [inputs[..., i] for i in self._bias_indices]
+            leadtime_input = tf.expand_dims(leadtime_input, -1)
+            bias_inputs = [tf.expand_dims(inputs[..., i], -1) for i in self._bias_indices]
 
             leadtime_mult = list()
             for i in range(len(bias_inputs)):
@@ -691,7 +692,6 @@ class Unet(Model):
 
                 # Multiply the leadtime function by the bias
                 curr = tf.multiply(curr_leadtime_input, bias_inputs[i])
-                curr = tf.expand_dims(curr, -1)
                 leadtime_mult += [curr]
             outputs = keras.layers.concatenate(leadtime_mult + [outputs], axis=-1)
 
