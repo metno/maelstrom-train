@@ -554,7 +554,7 @@ class Unet(Model):
 
         new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
 
-        super().__init__(input_shape, num_outputs)
+        super().__init__(new_input_shape, num_outputs)
 
     def get_outputs(self, inputs):
         outputs = inputs
