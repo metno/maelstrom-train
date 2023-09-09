@@ -494,11 +494,12 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
         Ip = loader.predictor_names.index("air_temperature_2m")
     total_loss = 0
     count = 0
+    dataset = loader.get_dataset()
 
     if len(evaluators) == 0:
         """ Use keras build in predict. The disadvantage is that we can't evaluate results per
         leadtime """
-        history = trainer.evaluate(loader.get_dataset())
+        history = trainer.evaluate(dataset)
         if maelstrom.util.is_list(history):
             total_loss = history[0]
         else:
@@ -512,7 +513,6 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
         This code doesn't currently work, since for a given batch we don't know what forecast
         reference time we are at. Ideally, the data should be batched across patches.
         """
-        dataset = loader.get_dataset()
         forecast_reference_times = loader.times
         samples_per_file = loader.num_samples_per_file
         num_files = loader.num_files
