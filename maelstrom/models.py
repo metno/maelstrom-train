@@ -763,23 +763,34 @@ class Today(Model):
             self,
             input_shape,
             num_outputs,
+            indices,
+            index_altitude,
+            index_model_altitude,
+            index_bias_recent,
+            index_bias_yesterday,
             with_leadtime=False,
     ):
         self.num_leadtimes = input_shape[0]
-        print(input_shape)
-        new_input_shape = get_input_size(input_shape, False, False)
-        self.with_leadtime = with_leadtime
+        self._with_leadtime = with_leadtime
+        new_input_shape = get_input_size(input_shape, self._with_leadtime, False)
+        self._indices = indices
+        self._index_altitude = index_altitude
+        self._index_model_altitude = index_model_altitude
+        self._index_bias_recent = index_bias_recent
+        self._index_bias_yesterday = index_bias_yesterday
         super().__init__(new_input_shape, num_outputs)
 
     def get_outputs(self, inputs):
         # Ecah quantile is a linear regression of all the inputs.
-        elev_diff = tf.expand_dims(inputs[..., 3] - inputs[..., 4], -1)
-        bias_recent = tf.expand_dims(inputs[..., 5], -1)
-        bias_yesterday = tf.expand_dims(inputs[..., 6], -1)
+        elev_diff = tf.expand_dims(inputs[..., self._index_altitude] - inputs[..., self._index_model_altitude], -1)
+        bias_recent = tf.expand_dims(inputs[..., self._index_bias_recent], -1)
+        bias_yesterday = tf.expand_dims(inputs[..., self._index_bias_yesterday], -1)
         inputs_new = list([elev_diff, bias_recent, bias_yesterday])
+        # inputs_new = list([elev_diff])
+        # inputs_new = list([bias_recent, bias_yesterday])
         inputs_new = keras.layers.Concatenate(axis=-1)(inputs_new)
 
-        if self.with_leadtime:
+        if self._with_leadtime:
             layer = keras.layers.Dense(self._num_outputs, activation="linear", use_bias=False)
             layer = maelstrom.layers.LeadtimeLayer(layer, num_leadtimes=self.num_leadtimes)
             outputs = layer(inputs_new)
