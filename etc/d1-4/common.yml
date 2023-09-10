@@ -222,6 +222,11 @@ models:
     - type: Today
       name: today
       with_leadtime: True
+      predictor_names: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
+      predictor_name_altitude: altitude
+      predictor_name_model_altitude: model_altitude
+      predictor_name_bias_recent: bias_recent
+      predictor_name_bias_yesterday: bias_yesterday
 output:
     quantiles: [0.1, 0.5, 0.9]
 loss:
