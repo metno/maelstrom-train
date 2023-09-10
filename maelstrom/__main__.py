@@ -439,7 +439,7 @@ def get_model(loader, num_outputs, configs, model, multi=False):
         if name.lower() == model.lower():
             args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
-            if args["type"].lower() in ["selectpredictor", "elevcorr"]:
+            if args["type"].lower() in ["selectpredictor", "elevcorr", "today"]:
                 # Allow either "indices" or "predictor_names". Both are needed, because when we inspect a
                 # model after it has been run, indices are stored in the output config.
                 if "indices" not in args:
@@ -448,19 +448,18 @@ def get_model(loader, num_outputs, configs, model, multi=False):
                         args["indices"] += [loader.predictor_names.index(predictor_name)]
                     del args["predictor_names"]
 
-                if "index_altitude" not in args:
-                    if "predictor_name_altitude" in args:
-                        args["index_altitude"] = loader.predictor_names.index(args["predictor_name_altitude"])
-                        del args["predictor_name_altitude"]
-                if "index_model_altitude" not in args:
-                    if "predictor_name_model_altitude" in args:
-                        args["index_model_altitude"] = loader.predictor_names.index(args["predictor_name_model_altitude"])
-                        del args["predictor_name_model_altitude"]
-
+                for name in ["altitude", "model_altitude", "bias_recent", "bias_yesterday"]:
+                    index_name = f"index_{name}"
+                    if index_name not in args:
+                        predictor_name = f"predictor_name_{name}"
+                        if predictor_name in args:
+                            args[index_name] = loader.predictor_names.index(args[predictor_name])
+                            del args[predictor_name]
             if multi:
                 with strategy.scope():
                     model = maelstrom.models.get(input_shape, num_outputs, **args)
             else:
+                print(args)
                 model = maelstrom.models.get(input_shape, num_outputs, **args)
             return model, args
     raise ValueError(f"Model {model} not defined in configuration file")
