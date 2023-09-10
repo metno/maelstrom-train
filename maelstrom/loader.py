@@ -933,6 +933,7 @@ class Loader:
         status = self.predictor_names == other_loader.predictor_names
         status &= self.predict_diff == other_loader.predict_diff
         status &= self.probabilistic_target == other_loader.probabilistic_target
+        status &= self.with_leadtime == other_loader.with_leadtime
         return status
 
     def get_time_from_batch(self, batch, sample):
