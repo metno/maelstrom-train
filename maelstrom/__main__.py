@@ -272,8 +272,10 @@ def main():
         with strategy.scope():
             checkpoint = tf.train.Checkpoint(model)
             checkpoint.restore(input_checkpoint_filepath).expect_partial()
-            # model.load_weights(input_checkpoint_filepath).expect_partial()
             atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
+
+        # Don't do it this way:
+        # model.load_weights(input_checkpoint_filepath).expect_partial()
 
     if main_process:
         print("\nRun configuration:")
