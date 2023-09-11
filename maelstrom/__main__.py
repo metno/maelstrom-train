@@ -10,6 +10,7 @@ import time
 import math
 import tqdm
 import socket
+import atexit
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import tensorflow as tf
@@ -267,7 +268,12 @@ def main():
     if args.load_weights is not None and main_process:
         input_checkpoint_filepath = args.load_weights + "/checkpoint"
         print(f"Loading weights from {input_checkpoint_filepath}")
-        model.load_weights(input_checkpoint_filepath).expect_partial()
+        strategy = tf.distribute.MirroredStrategy()
+        with strategy.scope():
+            checkpoint = tf.train.Checkpoint(model)
+            checkpoint.restore(input_checkpoint_filepath).expect_partial()
+            # model.load_weights(input_checkpoint_filepath).expect_partial()
+            atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
 
     if main_process:
         print("\nRun configuration:")
