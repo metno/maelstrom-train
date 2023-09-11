@@ -34,7 +34,7 @@ def main():
     parser.add_argument( "--config", type=maelstrom.load_yaml, help="Configuration file containing output paths, etc", required=True, nargs="*",)
     parser.add_argument( "-j", type=int, help="Number of threads to train with", dest="num_threads",)
     parser.add_argument( "--hardware", default="gpu", help="What hardware to run on?", choices=["cpu", "gpu"],)
-    parser.add_argument( "-m", help="Run this model", dest="model", required=True)
+    parser.add_argument( "-m", help="Run this model", dest="model")
     parser.add_argument( "-w", help="Print weights of the model", dest="print_weights", action="store_true",)
     parser.add_argument( "-o", default="results/%N_%T", help="Output folder", dest="output_folder",)
     parser.add_argument( "--seed", type=int, help="Random seed",)
@@ -142,16 +142,30 @@ def main():
         metrics = [
             # within_loss
             # maelstrom.loss.mae
-        ]  # [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
+        ]
+    # metrics = [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
 
-    model_name = args.model
-    model, model_config = get_model(
-        loader,
-        num_outputs,
-        config["models"],
-        args.model,
-        with_horovod,
-    )
+    if "model" in config:
+        model_name = get_model_name_from_config(config["model"])
+        model, model_config = get_model(
+            loader,
+            num_outputs,
+            [config["model"]],
+            model_name,
+            with_horovod=with_horovod,
+        )
+    else:
+        if args.model is None:
+            raise ValueError("-m model needed when config does not contain one model")
+
+        model_name = args.model
+        model, model_config = get_model(
+            loader,
+            num_outputs,
+            config["models"],
+            args.model,
+            with_horovod,
+        )
 
     start_time = time.time()
     dt = datetime.datetime.utcfromtimestamp(int(start_time))
@@ -180,7 +194,8 @@ def main():
         config_logger = maelstrom.logger.Logger(f"{output_folder}/config.yml")
         config_to_save = copy.copy(config)
         config_to_save["model"] = model_config
-        del config_to_save["models"]
+        if "models" in config_to_save:
+            del config_to_save["models"]
         config_logger.add(None, config_to_save)
         config_logger.write()
 
@@ -424,19 +439,29 @@ def get_loaders(config, with_horovod):
     return loader, loader_val, loader_test
 
 
-def get_model(loader, num_outputs, configs, model, multi=False):
+def get_model(loader, num_outputs, configs, model_name, with_horovod=False):
+    """ Get a keras model
+
+    Args:
+        loader
+        num_outputs (int): Number of output parameters
+        configs (list): A list of model config dictionary
+        model_name (str): Name of model to find from configs
+        with_horovod (bool): Handle horovod
+
+    Returns:
+        model (keras.Model): Instantiated model
+        args (dict): Model arguments
+    """
     input_shape = loader.sample_predictor_shape
-    if multi:
+    if with_horovod:
         gpus = tf.config.list_logical_devices("GPU")
         strategy = tf.distribute.MirroredStrategy(gpus[0:2])
 
     for config in configs:
-        if "name" not in config:
-            name = config["type"]
-        else:
-            name = config["name"]
+        name = get_model_name_from_config(config)
 
-        if name.lower() == model.lower():
+        if name.lower() == model_name.lower():
             args = {k: v for k, v in config.items() if k not in ["name", "disabled"]}
 
             if args["type"].lower() in ["selectpredictor", "elevcorr", "today"]:
@@ -455,7 +480,7 @@ def get_model(loader, num_outputs, configs, model, multi=False):
                         if predictor_name in args:
                             args[index_name] = loader.predictor_names.index(args[predictor_name])
                             del args[predictor_name]
-            if multi:
+            if with_horovod:
                 with strategy.scope():
                     model = maelstrom.models.get(input_shape, num_outputs, **args)
             else:
@@ -687,6 +712,13 @@ def get_validation_frequency(config, loader, with_horovod):
             )
     return validation_frequency
 
+
+def get_model_name_from_config(config):
+    if "name" not in config:
+        name = config["type"]
+    else:
+        name = config["name"]
+    return  name
 
 if __name__ == "__main__":
     main()
