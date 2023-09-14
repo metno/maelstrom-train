@@ -59,7 +59,6 @@ def main():
         os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
     else:
         gpus = tf.config.experimental.list_physical_devices("GPU")
-        print("Num GPUs Available: ", len(gpus))
         for gpu in gpus:
             tf.config.experimental.set_memory_growth(gpu, True)
         if with_horovod:
@@ -265,17 +264,17 @@ def main():
     # num_trainable_parameters = np.sum([K.count_params(w) for w in model.trainable_weights])
     # and skip training (this could be the raw model for example). However, we might still want
     # to run validation using the raw model, therefore we will still try to train it
-    if args.load_weights is not None and main_process:
+    if args.load_weights is not None: #  and main_process:
         input_checkpoint_filepath = args.load_weights + "/checkpoint"
         print(f"Loading weights from {input_checkpoint_filepath}")
-        strategy = tf.distribute.MirroredStrategy()
-        with strategy.scope():
-            checkpoint = tf.train.Checkpoint(model)
-            checkpoint.restore(input_checkpoint_filepath).expect_partial()
-            atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
+        # strategy = tf.distribute.MirroredStrategy()
+        # with strategy.scope():
+        #     checkpoint = tf.train.Checkpoint(model)
+        #     checkpoint.restore(input_checkpoint_filepath).expect_partial()
+        #     atexit.register(strategy._extended._collective_ops._pool.close) # type: ignore
 
         # Don't do it this way:
-        # model.load_weights(input_checkpoint_filepath).expect_partial()
+        model.load_weights(input_checkpoint_filepath).expect_partial()
 
     if main_process:
         print("\nRun configuration:")
@@ -462,9 +461,10 @@ def get_model(loader, num_outputs, configs, model_name, with_horovod=False):
         args (dict): Model arguments
     """
     input_shape = loader.sample_predictor_shape
-    if with_horovod:
-        gpus = tf.config.list_logical_devices("GPU")
-        strategy = tf.distribute.MirroredStrategy(gpus[0:2])
+    # strategy = None
+    # if with_horovod:
+        # gpus = tf.config.list_logical_devices("GPU")
+        # strategy = tf.distribute.MirroredStrategy(gpus[0:2])
 
     for config in configs:
         name = get_model_name_from_config(config)
@@ -489,8 +489,8 @@ def get_model(loader, num_outputs, configs, model_name, with_horovod=False):
                             args[index_name] = loader.predictor_names.index(args[predictor_name])
                             del args[predictor_name]
             if with_horovod:
-                with strategy.scope():
-                    model = maelstrom.models.get(input_shape, num_outputs, **args)
+                # with strategy.scope():
+                model = maelstrom.models.get(input_shape, num_outputs, **args)
             else:
                 print(args)
                 model = maelstrom.models.get(input_shape, num_outputs, **args)
