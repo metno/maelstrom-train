@@ -17,8 +17,8 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow import keras
 
-tf.random.set_seed(1000)
-np.random.seed(1000)
+# tf.random.set_seed(1001)
+# np.random.seed(1001)
 
 
 import maelstrom
@@ -38,7 +38,7 @@ def main():
     parser.add_argument( "-m", help="Run this model", dest="model")
     parser.add_argument( "-w", help="Print weights of the model", dest="print_weights", action="store_true",)
     parser.add_argument( "-o", default="results/%N_%T", help="Output folder", dest="output_folder",)
-    parser.add_argument( "--seed", type=int, help="Random seed",)
+    parser.add_argument( "--seed", default=int(time.time()), type=int, help="Random seed",)
     parser.add_argument( "--load_weights", help="Initialize with model weights found in this directory")
     parser.add_argument( "--train", default=1, type=int, help="Enable training?", dest="do_train", choices=[0, 1])
     parser.add_argument( "--test", default=1, type=int, help="Enable testing?", dest="do_test", choices=[0, 1])
