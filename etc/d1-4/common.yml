@@ -12,56 +12,44 @@ models:
       conv_size: 3
       filter_sizes: [5, 5, 5, 5]
     - type: Unet
-      name: unet_f16_l6_c3_p2
-      features: 16
-      layers: 6
-      conv_size: 3
-      pool_size: 2
-    - type: Unet
+      # This is the benchmark
       name: unet_f16_l6_c1_p2
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
+      activation: leakyrelu
     - type: Unet
-      name: unet_f16_l6_c1_p2_tanh
+      # Activation
+      name: unet_f16_l6_c1_p2_relu
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
-      activation: tanh
+      activation: relu
     - type: Unet
-      name: unet_f16_l6_c1_p2_linear
+      # Feature ratio
+      name: unet_f16_l6_c1_p2_f1
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
-      activation: linear
+      feature_ratio: 1
+      activation: leakyrelu
     - type: Unet
-      name: unet_f16_l3_c3_p4
-      features: 16
-      layers: 3
-      conv_size: 3
-      pool_size: 4
-    - type: Unet
-      name: unet_f16_l3_c1_p4
-      features: 16
-      layers: 3
-      conv_size: 1
-      pool_size: 4
-      # separable: True
-      # batch_normalization: True
-    - type: Unet
-      name: unet_f16_l6_c1_p2_dmean
+      # Feature ratio and leadtime model
+      name: unet_f16_l6_c1_p2_f1_bias
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
-      downsampling_type: mean
-      # separable: True
-      # batch_normalization: True
+      feature_ratio: 1
+      activation: leakyrelu
+      leadtime_index: 14
+      bias_indices: [3, 10]
     - type: Unet
-      name: unet_f16_l6_c1_p2_leaky_nearest
+      # Upsampling
+      name: unet_f16_l6_c1_p2_nearest
       features: 16
       layers: 6
       conv_size: 1
@@ -69,46 +57,16 @@ models:
       activation: leakyrelu
       upsampling_type: upsampling_nearest
     - type: Unet
-      name: unet_f16_l6_c1_p2_f1_leaky
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: leakyrelu
-    - type: Unet
-      name: unet_f16_l6_c3_p2_f1_leaky
-      features: 16
-      layers: 6
-      conv_size: 3
-      pool_size: 2
-      feature_ratio: 1
-      activation: leakyrelu
-    - type: Unet
-      name: unet_f16_l3_c1_p2_f1_leaky
-      features: 16
-      layers: 3
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: leakyrelu
-    - type: Unet
-      # This is the benchmark
-      name: unet_f16_l6_c1_p2_leaky
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      activation: leakyrelu
-    - type: Unet
-      name: unet_f16_l6_c3_p2_leaky
+      # Conv size
+      name: unet_f16_l6_c3_p2
       features: 16
       layers: 6
       conv_size: 3
       pool_size: 2
       activation: leakyrelu
     - type: Unet
-      name: unet_f16_l6_c1_p2_leaky_dmean
+      # Downsampling
+      name: unet_f16_l6_c1_p2_dmean
       features: 16
       layers: 6
       conv_size: 1
@@ -116,101 +74,38 @@ models:
       activation: leakyrelu
       downsampling_type: mean
     - type: Unet
-      name: unet_f16_l6_c1_p2_elu
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      activation: elu
-    - type: Unet
-      name: unet_f4_l6_c1_p2_elu
-      features: 4
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      activation: elu
-    - type: Unet
-      name: unet_f16_l6_c1_p2_f1_elu
+      # Downsampling and feature ratio
+      name: unet_f16_l6_c1_p2_f1_dmean
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
       feature_ratio: 1
-      activation: elu
+      activation: leakyrelu
+      downsampling_type: mean
     - type: Unet
-      name: unet_f16_l6_c1_p2_f1_elu_bn
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: elu
-      batch_normalization: True
-    - type: Unet
-      name: unet_f16_l6_c1_p2_f1_elu_bn_m99995
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: elu
-      batch_normalization: True
-      bn_momentum: 0.99995
-    - type: Unet
-      name: unet_f16_l6_c1_p2_f1_elu_bn_m9995
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: elu
-      batch_normalization: True
-      bn_momentum: 0.9995
-    - type: Unet
-      name: unet_f16_l6_c1_p2_f1_elu_noskipcon
-      features: 16
-      layers: 6
-      conv_size: 1
-      pool_size: 2
-      feature_ratio: 1
-      activation: elu
-      skipcon: False
-    - type: Unet
-      name: unet_f16_l3_c1_p4_leaky
+      # Levels/pooling
+      name: unet_f16_l3_c1_p4
       features: 16
       layers: 3
       conv_size: 1
       pool_size: 4
       activation: leakyrelu
     - type: Unet
-      name: unet_f16_l3_c1_p4_bn
-      features: 16
-      layers: 3
-      conv_size: 1
-      pool_size: 4
-      # separable: True
-      batch_normalization: True
-    - type: Unet
-      name: unet_f16_l3_c1_p4_bn_elu
-      features: 16
-      layers: 3
-      conv_size: 1
-      pool_size: 4
-      # separable: True
-      batch_normalization: True
-      activation: elu
-    - type: Unet
-      name: unet_f16_l6_c1_p2_bn
+      # This is the benchmark
+      name: unet_f16_l6_c1_p2_bias
       features: 16
       layers: 6
       conv_size: 1
       pool_size: 2
-      batch_normalization: True
+      activation: leakyrelu
+      leadtime_index: 14
+      bias_indices: [3, 10]
     - type: Dense
       name: dense_f12_l6
       features: 12
       layers: 6
-      activation: "relu"
+      activation: leakyrelu
     - type: SelectPredictor
       name: raw
       predictor_names: ["air_temperature_0.1_2m", "air_temperature_2m", "air_temperature_0.9_2m"]
