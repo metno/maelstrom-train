@@ -494,6 +494,8 @@ def get_model(loader, num_outputs, configs, model_name, with_horovod=False):
             else:
                 print(args)
                 model = maelstrom.models.get(input_shape, num_outputs, **args)
+
+            args["name"] = name
             return model, args
     raise ValueError(f"Model {model} not defined in configuration file")
 
