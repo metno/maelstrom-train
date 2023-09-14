@@ -601,7 +601,7 @@ class Unet(Model):
             layers += [outputs]
             # print(i, outputs.shape)
 
-            name = f"L{i}_pool"
+            name = f"L{i + 1}_pool"
             if self._downsampling_type == "max":
                 outputs = keras.layers.MaxPooling3D(pool_size=pool_size, name=name)(outputs)
             elif self._downsampling_type == "min":
@@ -625,7 +625,7 @@ class Unet(Model):
                     outputs
                 )
                 UpConv = keras.layers.UpSampling3D
-                outputs = UpConv(pool_size, name=f"L{i}_up")(outputs)
+                outputs = UpConv(pool_size, name=f"L{i + 2}_up")(outputs)
                 activation_layer = maelstrom.layers.get_activation(self._activation)
                 # Do a 2x2 convolution to simulate "learnable" bilinear interpolation
                 outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
@@ -672,7 +672,7 @@ class Unet(Model):
                     # print(paddings, layers[i].shape, outputs.shape, expanded.shape)
                     outputs = keras.layers.concatenate((layers[i], expanded), axis=-1)
                 else:
-                    outputs = keras.layers.concatenate((layers[i], outputs), axis=-1, name=f"L{i}_concat")
+                    outputs = keras.layers.concatenate((layers[i], outputs), axis=-1, name=f"L{i + 1}_concat")
             outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
 
         # Create a separate branch with f(leadtime) multiplied by each bias field
