@@ -44,7 +44,7 @@ def get(name, args, logger=None, model=None, output_folder=None):
         checkpoint_filepath = f"{output_folder}/checkpoint"
         model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
             filepath=checkpoint_filepath,
-            save_weights_only=True,
+            # save_weights_only=True,
             monitor=monitor,
             verbose=1,
             mode='min',
