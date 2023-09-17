@@ -201,6 +201,16 @@ def main():
 
         logger = maelstrom.logger.Logger(f"{output_folder}/log.txt")
 
+        model_metadata_logger = maelstrom.logger.Logger(f"{output_folder}/checkpoint/metadata.yml")
+        model_metadata_logger.add("predictor_names", loader.predictor_names)
+        normalization_map = dict()
+        for i, name in enumerate(loader.predictor_names):
+            normalization_map[name] = loader.coefficients[i, ...]
+        model_metadata_logger.add("normalization", normalization_map)
+        model_metadata_logger.add("with_leadtime", loader.with_leadtime)
+        model_metadata_logger.add("diff_variable", loader.raw_predictor_name)
+        model_metadata_logger.write()
+
     model_description = model.description()
     model_description.update(model_config)
     num_trainable_weights = int(np.sum([K.count_params(w) for w in model.trainable_weights]))

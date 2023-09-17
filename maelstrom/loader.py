@@ -437,9 +437,13 @@ class Loader:
         return 1
 
     @property
+    def raw_predictor_name(self):
+        return "air_temperature_2m"
+
+    @property
     def raw_predictor_index(self):
         """Returns the predictor index corresponding to the raw forecast"""
-        raw_predictor_index = self.predictor_names.index("air_temperature_2m")
+        raw_predictor_index = self.predictor_names.index(self.raw_predictor_name)
         return raw_predictor_index
 
     """
