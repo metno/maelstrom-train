@@ -69,9 +69,9 @@ def main():
                 print("Num GPUs Available: ", len(gpus))
             if len(gpus) > 1:
                 tf.config.experimental.set_visible_devices(
-                    gpus[hvd.local_rank()], "GPU"
+                    gpus[hvd.rank()], "GPU"
                 )
-            print("Current rank", hvd.local_rank())
+            print("Current rank", hvd.rank())
 
     if with_horovod:
         num_processes = hvd.size()
@@ -610,7 +610,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
                 evaluator.sync()
 
         for evaluator in evaluators:
-            if not with_horovod or hvd.local_rank() == 0:
+            if not with_horovod or hvd.rank() == 0:
                 evaluator.write()
             evaluator.close()
 
