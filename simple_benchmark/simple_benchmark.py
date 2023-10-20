@@ -14,7 +14,7 @@ import tensorflow.keras.backend as K
 def main():
     parser = argparse.ArgumentParser("Program to compare the performance of IPUs and GPUs")
     parser.add_argument('-b', default=1, type=int, help="Batch size (default 1)", dest="batch_size")
-    parser.add_argument('-e', default=1, type=int, help='Number of epochs', dest="epochs")
+    parser.add_argument('-e', default=3, type=int, help='Number of epochs', dest="epochs")
     parser.add_argument('-s', default=10, type=int, help='Steps per epoch', dest="steps_per_epoch")
     parser.add_argument('--debug', help='Turn on debugging information', action="store_true")
     parser.add_argument('--hardware', help='What hardware to run this on', dest='hardware', choices=["gpu", "cpu", "ipu"])
@@ -41,7 +41,7 @@ def main():
         strategy = NoStrategy()
 
     # Settings
-    patch_size = 512
+    patch_size = 128
     num_predictors = 17
     pred_shape = [1, patch_size, patch_size, num_predictors]
     target_shape = [1, patch_size, patch_size, 1]
@@ -78,7 +78,7 @@ def main():
     print(f"   Target sample shape: {target_shape}")
     print(f"   Num epochs: ", args.epochs)
     print(f"   Batch size: ", args.batch_size)
-    print(f"   Batches per epoch: {steps_per_epoch}")
+    print(f"   Batches per epoch: {args.steps_per_epoch}")
     print(f"   Dataset size: {dataset_size_mb:.2f} MB")
     print("Training performance:")
     print(f"   Total training time: {training_time:.2f} s")
