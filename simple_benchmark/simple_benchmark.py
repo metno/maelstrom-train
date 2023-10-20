@@ -41,17 +41,16 @@ def main():
         strategy = NoStrategy()
 
     # Settings
-    patch_size = 32
+    patch_size = 512
     num_predictors = 17
     pred_shape = [1, patch_size, patch_size, num_predictors]
     target_shape = [1, patch_size, patch_size, 1]
-    num_outputs = 3
-    steps_per_epoch = args.steps_per_epoch
-    learning_rate = 1.0e-5
+    learning_rate = 1.0e-5  # Doesn't matter for this benchmark
     loss = quantile_score
-    dataset_size_gb = 4 * np.product(pred_shape) * steps_per_epoch * args.batch_size / 1024 ** 3
+    num_outputs = 3
 
-    dataset = get_dataset(pred_shape, target_shape, steps_per_epoch * args.epochs, args.batch_size)
+    dataset = get_dataset(pred_shape, target_shape, args.steps_per_epoch * args.epochs, args.batch_size)
+    dataset_size_mb = 4 * np.product(pred_shape) * args.steps_per_epoch * args.batch_size / 1024 ** 2
 
     with strategy.scope():
         model = get_model("unet", pred_shape, num_outputs)
@@ -68,7 +67,7 @@ def main():
 
         # Train the model
         start_time = time.time()
-        history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=steps_per_epoch, callbacks=callbacks)
+        history = model.fit(dataset, epochs=args.epochs, steps_per_epoch=args.steps_per_epoch, callbacks=callbacks)
         training_time = time.time() - start_time
 
     # Write out results
@@ -80,17 +79,17 @@ def main():
     print(f"   Num epochs: ", args.epochs)
     print(f"   Batch size: ", args.batch_size)
     print(f"   Batches per epoch: {steps_per_epoch}")
-    print(f"   Dataset size: {dataset_size_gb:.2f} (GB)")
+    print(f"   Dataset size: {dataset_size_mb:.2f} MB")
     print("Training performance:")
     print(f"   Total training time: {training_time:.2f} s")
-    print(f"   Average performance: {dataset_size_gb / training_time * args.epochs:.2f} GB/s")
+    print(f"   Average performance: {dataset_size_mb / training_time * args.epochs:.2f} MB/s")
     print(f"   First epoch time: {times[0]:.2f} s")
     print(f"   Min epoch time: {np.min(times):.2f} s")
-    print(f"   Performance min epoch: {dataset_size_gb / np.min(times):.2f} GB/s")
+    print(f"   Performance min epoch: {dataset_size_mb / np.min(times):.2f} MB/s")
     print(f"   Mean epoch time: {np.mean(times):.2f} s")
-    print(f"   Performance mean epoch: {dataset_size_gb / np.mean(times):.2f} GB/s")
+    print(f"   Performance mean epoch: {dataset_size_mb / np.mean(times):.2f} MB/s")
     print(f"   Max epoch time: {np.max(times):.2f} s")
-    print(f"   Performance max epoch: {dataset_size_gb / np.max(times):.2f} GB/s")
+    print(f"   Performance max epoch: {dataset_size_mb / np.max(times):.2f} MB/s")
     print_gpu_usage("   GPU memory: ")
     print_cpu_usage("   CPU memory: ")
 
@@ -99,6 +98,16 @@ def main():
 Data loader
 """
 def get_dataset(pred_shape, target_shape, num_batches, batch_size):
+    """ Creates a tf dataset with specified sizes
+    Args:
+        pred_shape (list): Shape of predictors (for a single sample)
+        target_shape (list): Shape of targets (for a single sample)
+        num_batches (int): Number of batches in the dataset
+        batch_size (int): Number of samples in one batch
+
+    Returns:
+        tf.data.Dataset
+    """
     def get_generator(pred_shape, target_shape, num_samples):
         def gen():
             for i in range(num_samples):
@@ -109,7 +118,8 @@ def get_dataset(pred_shape, target_shape, num_batches, batch_size):
 
     output_signature = (tf.TensorSpec(shape=pred_shape, dtype=tf.float32), tf.TensorSpec(shape=target_shape, dtype=tf.float32))
     dataset = tf.data.Dataset.from_generator(get_generator(pred_shape, target_shape, num_batches * batch_size), output_signature=output_signature)
-    # drop_remainder needed for IPU
+
+    # drop_remainder needed for IPU:
     dataset = dataset.batch(batch_size, drop_remainder=True)
     return dataset
 
