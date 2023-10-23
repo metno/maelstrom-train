@@ -1,0 +1,494 @@
+name:    d3-7
+outpath: d3-7
+comment: MAELSTROM AP1 benchmark jube script
+
+parameterset:
+  - name: appParameters
+    parameter:
+      - name: datadir
+        type: string
+        tag: jwb|jwc+!cscratch
+        _: "/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datadir
+        type: string
+        tag: cscratch
+        _: "/p/cscratch/fs/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/"
+      - name: datadir
+        type: string
+        tag: e4intel|e4amd
+        _: "/scratch/tnipen/"
+      - name: datadir
+        type: string
+        tag: scratch_local
+        _: "/scratch_local/Maelstrom/tnipen/"
+      - name: datasize
+        type: string
+        _: 5TB
+        tag: "!test"
+      - name: datasize
+        type: string
+        _: 5GB
+        tag: test
+      - name: outdir
+        type: string
+        _: "$jube_wp_abspath/output_model"
+      - name: program
+        type: string
+        _: $jube_benchmark_home/../benchmark/benchmark.py
+      - name: input_files
+        type: string
+        _: ${datadir}/${datasize}/202???01T*.nc
+      - name: infer_input_files
+        type: string
+        _: ${datadir}/${datasize}/20200615T*.nc
+      - name: batch_size
+        type: int
+        tag: "!jwc"
+        _: 72
+      # V100 GPUs don't have enough memory, so we need a smaller batch size
+      - name: batch_size
+        type: int
+        tag: jwc
+        _: 36
+      - name: patch_size
+        type: int
+        tag: "!test"
+        _: 512
+      - name: patch_size
+        type: int
+        _: 32
+        tag: test
+      # Maximum number of threads that each stage in data loader pipeline can use
+      - name: num_parallel_calls
+        type: int
+        _: 12
+      - name: experiment
+        type: int
+        _: 0 # ,1,2
+      - name: normalization
+        type: string
+        _: ${datadir}/normalization.yml
+  - name: trainParameters
+    parameter:
+      - name: mode
+        type: string
+        _: train
+      - name: nepochs
+        type: int
+        _: 3
+      - name: validation_files
+        type: string
+        _ : ${datadir}/${datasize}/20200615T*.nc
+      - name: program_args
+        type: string
+        _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files} --norm ${normalization} -f"
+  - name: loadtrainParameters
+    parameter:
+      - name: mode
+        type: string
+        _: train
+      - name: nepochs
+        type: int
+        _: 3
+      - name: validation_files
+        type: string
+        _ : ${datadir}/${datasize}/20200615T*.nc
+      - name: program_args
+        type: string
+        _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files} --norm ${normalization}"
+  - name: loadParameters
+    parameter:
+      - name: mode
+        type: string
+        _: load
+      - name: program_args
+        type: string
+        _: "${input_files} -m load -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
+  - name: inferParameters
+    parameter:
+      - name: mode
+        type: string
+        _: infer
+      - name: program_args
+        type: string
+        _: "${infer_input_files} -m infer -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} --norm ${normalization}"
+  - name: globalParameter
+    parameter:
+      - name: modules
+        tag: "jwb|jwc"
+        separator: |
+        _: 
+          module load Stages/2022 &&
+          module load GCCcore/.11.2.0 &&
+          module load TensorFlow/2.6.0-CUDA-11.5 &&
+          module load GCC/11.2.0 &&
+          module load OpenMPI/4.1.2 &&
+          module load mpi4py/3.1.3 &&
+          module load Horovod/0.24.3
+      - name: modules
+        tag: e4intel|e4amd
+        separator: |
+        _:
+          module load slurm &&
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate
+      - name: systemname
+        tag: jwc
+        _: jwc
+      - name: systemname
+        tag: jwb
+        _: jwb
+      - name: systemname
+        tag: e4intel
+        _: e4intel
+      - name: systemname
+        tag: e4amd
+        _: e4amd
+  - name: executeset
+    init_with: platform.xml
+  - name: systemParameter
+    init_with: platform.xml
+    parameter:
+      - name: preprocess
+        mode: text
+        tag: e4intel|e4amd
+        # separator: |
+        _:
+          export label=$$(/opt/share/scripts/powerdiscovery/getlabel.sh);
+          echo "POWERMEASUREMENT Label = $$label";
+          /opt/share/scripts/powerdiscovery/getpower_bg.sh 1000 &
+          $modules;
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: preprocess
+        mode: text
+        tag: "!e4intel+!e4amd"
+        # separator: |
+        _:
+          $modules;
+          source $jube_benchmark_home/../.venv_${systemname}/bin/activate;
+      - name: postprocess
+        mode: text
+        tag: e4intel|e4amd
+        separator: |
+        _: |
+          kill -9 $$(cat ~/powerout.$$label.pid)
+          awk '{print "POWERMEASUREMENT: " $0}' ~/powerout.$$label.csv
+
+      # NOTE: put n_procs here. If it is put in the different steps (train, load, infer), then jube won't
+      # run since then threadspertask cannot be computed. It gives the following error:
+      # Cannot evaluate "48 // $num_procs" for parameter "calc_threadspertask": invalid syntax (<string>, line 1)
+      - {name: n_cpu, _: 48, tag: jwb}
+      - {name: n_cpu, _: 40, tag: jwc}
+      - {name: n_cpu, _: 32, tag: e4intel|e4amd}
+      - name: SRUN_CPUS_PER_TASK
+        export: true
+        _: ${SLURM_CPUS_PER_TASK}
+      - name: HDF5_USE_FILE_LOCKING
+        export: true
+        tag: cscratch
+        _: "FALSE"
+      - name: nodes
+        _: 1
+      - name: n_procs
+        tag: jwb
+        _: 1,2,4
+      - name: n_procs
+        tag: "!jwb"
+        _: 1
+      - name: n_gpu
+        _: $n_procs
+      - name: taskspernode
+        _: $n_procs
+      - name: threadspertask
+        mode: python
+        type: int
+        _:  $n_cpu // $n_procs
+      - name: timelimit
+        _: "01:30:00"
+      - name: account
+        tag: jwb|jwc
+        _: deepacf
+      - name: account
+        tag: e4amd|e4intel
+        _: maelstrom
+      - name: queue
+        tag: jwb+!test
+        _: booster
+      - name: queue
+        tag: jwb+test
+        _: develbooster
+      - name: queue
+        tag: jwc+!test
+        _: gpus
+      - name: queue
+        tag: jwc+test
+        _: develgpus
+      - name: queue
+        tag: e4intel
+        _: i-gpu-a100
+      - name: queue
+        tag: e4amd
+        _: a-gpu-mi100
+      - name: gres
+        _: gpu:$n_gpu
+      - name: additional_job_config
+        tag: e4intel|e4amd
+        _: "#SBATCH --mem=256Gb"
+      - name: executable
+        _: python -u ${program}
+      - name: args_exec
+        mode: text
+        _: > 
+          ${program_args}
+
+patternset:
+   - name: perf_patterns
+     pattern:
+      - {name: jobid, type: int, _: "Submitted batch job $jube_pat_int" }
+      - {name: training_time, type: float, _: "Total training time: ${jube_pat_fp} s"}
+      - {name: total_time, type: float, _: "Total runtime: ${jube_pat_fp} s"}
+      - {name: data_loading_time, type: float, _: "Data loading overhead: ${jube_pat_fp} s"}
+      - {name: inference_time, type: float, _: "Inference time: ${jube_pat_fp} s"}
+      - {name: epoch_time_first, type: float, _: "First epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_min, type: float, _: "Min epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_avg, type: float, _: "Mean epoch time: $jube_pat_fp s"}
+      - {name: epoch_time_max, type: float, _: "Max epoch time: $jube_pat_fp s"}
+      - {name: batch_time_avg, type: float, _: "Average time per batch: $jube_pat_fp s"}
+      - {name: loss, type: float, _: "Final loss:\\s+$jube_pat_fp"}
+      - {name: val_loss, type: float, _: "Final val loss:\\s+$jube_pat_fp"}
+      - {name: cpu_mem, type: float, _: "Final CPU memory:.*peak: $jube_pat_fp GB"}
+      - {name: gpu_mem, type: float, _: "Final GPU memory:.*peak: $jube_pat_fp GB"}
+      - {name: performance, type: float, _: "Average performance:\\s+$jube_pat_fp GB/s"}
+      - {name: node_id, type: string, _: "POWERMEASUREMENT Label = $jube_pat_wrd"}
+      - {name: time_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_int,$jube_pat_nint,$jube_pat_nint"}
+      - {name: watt_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_nint,$jube_pat_int,$jube_pat_nint"}
+      - {name: va_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_nint,$jube_pat_nint,$jube_pat_int"}
+
+
+analyser:
+    - name: analyse_train
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: train
+        file:
+            - stdout
+            - job.out
+    - name: analyse_loadtrain
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: loadtrain
+        file:
+            - stdout
+            - job.out
+    - name: analyse_load
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: load
+        file:
+            - stdout
+            - job.out
+    - name: analyse_infer
+      reduce: false
+      use: perf_patterns
+      analyse:
+        step: infer
+        file:
+            - stdout
+            - job.out
+           
+
+result:
+    - use: analyse_loadtrain
+      table:
+        name: result_loadtrain
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "Experiment", _: experiment}
+          - {title: "JobID", _: jobid}
+          - {title: "# nodes", _: nodes}
+          - {title: "# gpu", _: n_gpu}
+          - {title: "num procs", _: n_procs}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "Total runtime", _: total_time}
+          - {title: "Training time", _: training_time}
+          - {title: "avg. epoch time [s]", _: epoch_time_avg}
+          - {title: "performance [GB/s]", _: performance}
+          - {title: "first epoch time [s]", _: epoch_time_first}
+          - {title: "min epoch time [s]", _: epoch_time_min}
+          - {title: "max epoch time [s]", _: epoch_time_max}
+          - {title: "avg. batch time [s]", _: batch_time_avg}
+          - {title: "loss", _: loss}
+          - {title: "val loss", _: val_loss}
+          - {title: "max cpu mem", _: cpu_mem}
+          - {title: "max gpu mem", _: gpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
+          # - {title: "Min. Watts",      _: watt_pat_min}
+          # - {title: "Max. VA",         _: va_pat_max}
+          # - {title: "Avg. VA",         _: va_pat_avg}
+          # - {title: "Min. VA",         _: va_pat_min}
+    - use: analyse_train
+      table:
+        name: result_train
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "Experiment", _: experiment}
+          - {title: "JobID", _: jobid}
+          - {title: "# nodes", _: nodes}
+          - {title: "# gpu", _: n_gpu}
+          - {title: "num procs", _: n_procs}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "Total runtime", _: total_time}
+          - {title: "Training time", _: training_time}
+          - {title: "avg. epoch time [s]", _: epoch_time_avg}
+          - {title: "performance [GB/s]", _: performance}
+          - {title: "first epoch time [s]", _: epoch_time_first}
+          - {title: "min epoch time [s]", _: epoch_time_min}
+          - {title: "max epoch time [s]", _: epoch_time_max}
+          - {title: "avg. batch time [s]", _: batch_time_avg}
+          - {title: "loss", _: loss}
+          - {title: "val loss", _: val_loss}
+          - {title: "max cpu mem", _: cpu_mem}
+          - {title: "max gpu mem", _: gpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
+          # - {title: "Min. Watts",      _: watt_pat_min}
+          # - {title: "Max. VA",         _: va_pat_max}
+          # - {title: "Avg. VA",         _: va_pat_avg}
+          # - {title: "Min. VA",         _: va_pat_min}
+    - use: analyse_load
+      table:
+        name: result_load
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "Experiment", _: experiment}
+          - {title: "JobID", _: jobid}
+          - {title: "# nodes", _: nodes}
+          - {title: "num procs", _: n_procs}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "Total runtime", _: total_time}
+          - {title: "avg. batch time [s]", _: batch_time_avg}
+          - {title: "performance [GB/s]", _: performance}
+          - {title: "max cpu mem", _: cpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
+    - use: analyse_infer
+      table:
+        name: result_infer
+        style: pretty
+        sort: iter_pat
+        column: 
+          - {title: "Experiment", _: experiment}
+          - {title: "JobID", _: jobid}
+          - {title: "# nodes", _: nodes}
+          - {title: "# gpu", _: n_gpu}
+          - {title: "num procs", _: n_procs}
+          - {title: "# cpu", _: threadspertask}
+          - {title: "Total runtime", _: total_time}
+          - {title: "Data loading time", _: data_loading_time}
+          - {title: "Inference time", _: inference_time}
+          - {title: "performance [GB/s]", _: performance}
+          - {title: "max cpu mem", _: cpu_mem}
+          - {title: "max gpu mem", _: gpu_mem}
+          - {title: "node_id", _: node_id}
+          - {title: "Max. Watts",      _: watt_pat_max}
+          - {title: "Avg. Watts",      _: watt_pat_avg}
+
+step:
+  - name: setup_venv
+    active: false
+    use:
+      - globalParameter
+      - systemParameter
+    do:
+      _:
+        $modules;
+        cd $jube_benchmark_home/../setup_env/ &&
+        source ./setup_${systemname}.sh
+
+  # Traning experiments
+  - name: train
+    active: true
+    use:
+      - appParameters
+      - trainParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _: 
+        $modules;
+        $submit $submit_script
+  - name: loadtrain
+    active: false
+    use:
+      - appParameters
+      - loadtrainParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _: 
+        $modules;
+        $submit $submit_script
+
+
+  # Data loader experiments
+  - name: load
+    active: false
+    use:
+      - appParameters
+      - loadParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _:
+        $modules;
+        $submit $submit_script
+
+  # Inference experiments
+  - name: infer
+    active: false
+    use:
+      - appParameters
+      - inferParameters
+      - globalParameter
+      - systemParameter
+      - executeset
+      - from: platform.xml
+        _: jobfiles
+      - from: platform.xml
+        _: executesub
+    do:
+      done_file: $ready_file
+      error_file: $error_file
+      _:
+        $modules;
+        $submit $submit_script
