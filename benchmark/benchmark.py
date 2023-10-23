@@ -47,6 +47,10 @@ if with_horovod:
 # run out of data. We should really strive to make the benchmark divide evenly, otherwise it is hard
 # to analyse the results for the training.
 
+# NOTE: Generating fake data. Two purposes. 1) To take out the time reading from disk 2) To take out
+# the entire I/O time (reading, and processing). Currently, we have
+# implemented purpose 2.
+
 def main():
     parser = argparse.ArgumentParser("Program that test the MAELSTROM AP1 data pipeline")
     parser.add_argument("files", help="Read data from these files (e.g. /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/2020030*.nc)", nargs="+")
@@ -163,6 +167,7 @@ def main():
         time_first_sample = None
     elif args.mode == "load":
         for k in dataset:
+            # print(k[0].shape)
             curr_time = time.time()
             if count == 0 and main_process:
                 # The first sample is avaiable
@@ -311,6 +316,16 @@ def main():
             print_cpu_usage("   Final CPU memory: ")
 
 
+def map_decorator1_to_2(func):
+    """Decorator to wrap a 1-argument function as a tf.py_function"""
+    def wrapper(self, i):
+        return tf.py_function(
+                lambda i: func(self, i),
+                inp=(i,),
+                Tout=(tf.float32, tf.float32)
+                )
+    return wrapper
+
 def map_decorator1_to_3(func):
     """Decorator to wrap a 1-argument function as a tf.py_function"""
     def wrapper(self, i):
@@ -435,6 +450,24 @@ class Ap1Loader:
         """
         self.start_time = time.time()
 
+        if 0 and self.create_fake_data:
+            # Fake data purpose 2: Generate one fake sample, then call repeat. This is the fastest
+            # way. It removes any RAM -> GPU memory transfer.
+            num_leadtimes = self.num_leadtimes
+            if not self.with_leadtime:
+                num_leadtimes = 1
+            if self.patch_size is None:
+                raise NotImplementedError()
+            else:
+                pred = np.zeros([1, num_leadtimes, self.patch_size, self.patch_size, self.num_predictors], np.float32)
+                true = np.zeros([1, num_leadtimes, self.patch_size, self.patch_size, 1], np.float32)
+            dataset = tf.data.Dataset.from_tensor_slices((pred, true))
+            # Add batch size so we are sure to have enough (needed for IPUs)
+            dataset = dataset.repeat(self.num_samples * self.repeat + self.batch_size * self.repeat)
+            dataset = dataset.batch(self.batch_size, drop_remainder=True)
+            dataset = dataset.prefetch(1)
+            return dataset
+
         if self.shuffle_leadtimes:
             dataset = tf.data.Dataset.range(len(self.filenames) * self.num_leadtimes)
             num_read_threads = num_parallel_calls
@@ -445,6 +478,17 @@ class Ap1Loader:
         dataset = dataset.shuffle(len(self.filenames))
         if self.repeat is not None:
             dataset = dataset.repeat(self.repeat)
+
+        if self.create_fake_data:
+            # Fake data purpose 2. This skips all processing of the data. It does include a transfer
+            # from RAM to GPU. This seems really slow though (on the V100) for some reason, but fast
+            # on A100.
+            dataset = dataset.map(self.generate_fake_data)
+            dataset = dataset.unbatch()
+            dataset = dataset.batch(self.batch_size)
+            dataset = dataset.prefetch(1)
+            return dataset
+
 
         # Read data from NETCDF files
         # Outputs three tensors:
@@ -527,6 +571,20 @@ class Ap1Loader:
     """
     Dataset operations
     """
+    @map_decorator1_to_2
+    def generate_fake_data(self, index):
+        num_leadtimes = self.num_leadtimes
+        num_patches = self.num_patches_per_file
+        if not self.with_leadtime:
+            num_leadtimes = 1
+            num_patches = self.num_patches_per_file * self.num_leadtimes
+        if self.patch_size is None:
+            raise NotImplementedError()
+        # print("SIZE:", np.product([num_patches, num_leadtimes, self.patch_size, self.patch_size, self.num_predictors]) * 4 / 1024**3)
+        predictors = tf.zeros([num_patches, num_leadtimes, self.patch_size, self.patch_size, self.num_predictors], np.float32)
+        targets = tf.zeros([num_patches, num_leadtimes, self.patch_size, self.patch_size, 1], np.float32)
+        return predictors, targets
+
     @map_decorator1_to_3
     def read(self, index):
         """Read data from file
@@ -573,6 +631,8 @@ class Ap1Loader:
                 static_predictors = tf.convert_to_tensor(static_predictors)
                 targets = tf.convert_to_tensor(targets)
             else:
+                # Fake data purpose 1: Remove the time it takes to read from disk. This allows us to
+                # study the processing of the data, without needing fast disks.
                 if not self.shuffle_leadtimes:
                     predictors = tf.random.uniform(self.predictor_shape)
                     targets = tf.expand_dims(tf.random.uniform(self.target_shape), 3)
