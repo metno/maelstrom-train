@@ -832,6 +832,14 @@ class Loader:
 
         self.num_targets = 1 + self.probabilistic_target
 
+        if self.patch_size is None:
+            self.lats = dataset.latitude.values
+            self.lons = dataset.longitude.values
+        else:
+            # TODO: Check if this is meshed correctly
+            # TODO: These are then not technically lats and lons, but x and y
+            self.lons, self.lats = np.meshgrid(np.arange(self.patch_size), np.arange(self.path_size))
+
         # dataset.close()
 
     def description(self):

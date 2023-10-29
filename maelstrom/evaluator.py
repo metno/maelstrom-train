@@ -1,4 +1,5 @@
 import numpy as np
+import xarray as xr
 
 import maelstrom
 
@@ -23,75 +24,76 @@ class Evaluator:
 
 class Verif(Evaluator):
     def __init__(
-        self, filename, leadtimes, points, quantiles=None, attributes=dict(), sampling=1
+        self, filename, leadtimes, lats, lons, quantiles=None, attributes=dict(), sampling=1
     ):
         self.filename = filename
-
-        if 0.5 not in quantiles:
-            print(
-                "Note: quantile=0.5 not in output. Determinsitic forecast not written to verif file"
-            )
-
-        self.sampling = sampling
         self.leadtimes = leadtimes
-        self.points = points
+        self.lats = lats
+        self.lons = lons
         self.quantiles = quantiles
+        self.attributes = attributes
+        self.sampling = sampling
 
-        kwargs = dict()
-        if len(quantiles) > 1 or quantiles[0] != 0.5:
-            kwargs["quantiles"] = quantiles
-            self.write_quantiles = True
-        else:
-            self.write_quantiles = False
+        # Save values as a list of (frt, leadtime, fcst, obs) tuples
+        # fcst have shape (y, x, output) and obs have shape (y, x)
+        self.values = list()
 
-        self.file = maelstrom.output.VerifFile(
-            filename,
-            points,
-            [i // 3600 for i in self.leadtimes],
-            extra_attributes=attributes,
-            **kwargs,
-        )
-
-        # A cache for the observations: valid_time -> observations
-        self.obs_cache = set()
 
     def evaluate(self, forecast_reference_time, leadtime, fcst, targets):
         assert len(fcst.shape) == 3
+        assert len(targets.shape) == 3
 
         # Add observations
-        curr_obs = np.reshape(
-            targets[:: self.sampling, :: self.sampling, 0],
-            [self.points.size()],
-        )
-        self.file.add_observations(forecast_reference_time + leadtime, curr_obs)
-        self.obs_cache.add(curr_valid_time)
-        # print("obs:", curr_obs)
+        curr_obs = targets[::self.sampling, :: self.sampling, 0]
+        curr_fcst = fcst[::self.sampling, :: self.sampling, :]
+        values = (forecast_reference_time, leadtime, curr_fcst, curr_obs)
+        self.values += [values]
 
-        # Add determinsitic forecast
-        if 0.5 in self.quantiles:
-            I50 = self.quantiles.index(0.5)
-
-            curr_fcst = fcst[..., I50]
-
-            curr_fcst = np.reshape(
-                curr_fcst[:: self.sampling, :: self.sampling],
-                [len(self.leadtimes), self.points.size()],
-            )
-            self.file.add_forecast(forecast_reference_time, curr_fcst)
-            # print("Fcst", i, np.nanmean(curr_fcst))
-
-        # Add probabilistic forecast
-        if self.write_quantiles:
-            num_outputs = len(self.quantiles)
-            curr_fcst = np.reshape(
-                fcst[0, :, :: self.sampling, :: self.sampling, :],
-                [len(self.leadtimes), self.points.size(), num_outputs],
-            )
-            self.file.add_quantile_forecast(forecast_reference_time, curr_fcst)
-        self.file.sync()
+    def sync(self):
+        self.values = hvd.allgather_object(self.values)
+        self.values = sum(allvalues, [])
 
     def write(self):
-        self.file.write()
+        frts = np.sort(np.unique([i[0] for i in self.values]))
+        leadtimes = np.sort(np.unique([i[1] for i in self.values]))
+
+        T = len(frts)
+        LT = len(leadtimes)
+        lats = self.lats[::self.sampling, ::self.sampling].flatten()
+        lons = self.lons[::self.sampling, ::self.sampling].flatten()
+        L = len(lats)
+        Q = len(self.quantiles)
+
+        fcst = np.nan * np.zeros([T, LT, L, Q], np.float32)
+        obs = np.nan * np.zeros([T, LT, L], np.float32)
+
+        # Loop over all stored data and put into fcst/obs arrays
+        for t in range(len(self.values)):
+            curr_frt, curr_leadtime, curr_fcst, curr_obs = self.values[t]
+            It = np.where(frts == curr_frt)[0][0]
+            Ilt = np.where(leadtimes == curr_leadtime)[0][0]
+            curr_fcst = curr_fcst[::self.sampling, ::self.sampling, :]
+            curr_fcst = np.reshape(curr_fcst, [L, Q])
+            curr_obs = curr_obs[::self.sampling, ::self.sampling]
+            curr_obs = curr_obs.flatten()
+            fcst[It, Ilt, :, :] = curr_fcst
+            obs[It, Ilt, :] = curr_obs
+
+        data_vars = dict()
+        data_vars["time"] = frts
+        data_vars["leadtime"] = leadtimes // 3600
+        data_vars["lat"] = (("location",), lats)
+        data_vars["quantile"] = self.quantiles
+        data_vars["lon"] = (("location", ), lons)
+        data_vars["location"] = np.arange(L)
+        data_vars["x"] = (("time", "leadtime", "location", "quantile"), fcst)
+        if 0.5 in self.quantiles:
+            I = self.quantiles.index(0.5)
+            data_vars["fcst"] = (("time", "leadtime", "location"), fcst[:, :, :, I])
+        data_vars["obs"] = (("time", "leadtime", "location"), obs)
+        coords = dict()
+        dataset = xr.Dataset(data_vars, coords, self.attributes)
+        dataset.to_netcdf(self.filename)
 
 
 class Aggregator(Evaluator):

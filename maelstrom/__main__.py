@@ -684,16 +684,18 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             sampling = 1
             if "sampling" in eval_config:
                 sampling = eval_config["sampling"]
-            points = loader.get_grid_resampled(sampling).to_points()
             attributes = loader.description()
             attributes.update(model.description())
             for k, v in attributes.items():
                 attributes[k] = str(v)
+            attributes["units"] = "C"
+            attributes["standard_name"] = "air_temperature"
+            attributes["long_name"] = "Temperature"
             # The verif file should ideally be called the model name. That makes it more efficient
             # to use with verif when comparing multiple runs
             filename = f"{output_folder}/{model_name}.nc"
             evaluator = maelstrom.evaluator.Verif(
-                filename, leadtimes, points, quantiles, attributes
+                filename, leadtimes, loader.lats, loader.lons, quantiles, attributes
             )
         elif eval_type == "aggregator":
             filename = f"{output_folder}/{model_name}_test.txt"
