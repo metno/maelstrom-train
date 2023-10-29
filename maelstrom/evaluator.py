@@ -24,12 +24,13 @@ class Evaluator:
 
 class Verif(Evaluator):
     def __init__(
-        self, filename, leadtimes, lats, lons, quantiles=None, attributes=dict(), sampling=1
+        self, filename, leadtimes, lats, lons, elevs, quantiles=None, attributes=dict(), sampling=1
     ):
         self.filename = filename
         self.leadtimes = leadtimes
         self.lats = lats
         self.lons = lons
+        self.elevs = elevs
         self.quantiles = quantiles
         self.attributes = attributes
         self.sampling = sampling
@@ -61,6 +62,7 @@ class Verif(Evaluator):
         LT = len(leadtimes)
         lats = self.lats[::self.sampling, ::self.sampling].flatten()
         lons = self.lons[::self.sampling, ::self.sampling].flatten()
+        elevs = self.elevs[::self.sampling, ::self.sampling].flatten()
         L = len(lats)
         Q = len(self.quantiles)
 
@@ -72,9 +74,7 @@ class Verif(Evaluator):
             curr_frt, curr_leadtime, curr_fcst, curr_obs = self.values[t]
             It = np.where(frts == curr_frt)[0][0]
             Ilt = np.where(leadtimes == curr_leadtime)[0][0]
-            curr_fcst = curr_fcst[::self.sampling, ::self.sampling, :]
             curr_fcst = np.reshape(curr_fcst, [L, Q])
-            curr_obs = curr_obs[::self.sampling, ::self.sampling]
             curr_obs = curr_obs.flatten()
             fcst[It, Ilt, :, :] = curr_fcst
             obs[It, Ilt, :] = curr_obs

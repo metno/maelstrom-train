@@ -695,7 +695,8 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             # to use with verif when comparing multiple runs
             filename = f"{output_folder}/{model_name}.nc"
             evaluator = maelstrom.evaluator.Verif(
-                filename, leadtimes, loader.lats, loader.lons, quantiles, attributes
+                filename, leadtimes, loader.lats, loader.lons, loader.elevs, quantiles, attributes,
+                sampling
             )
         elif eval_type == "aggregator":
             filename = f"{output_folder}/{model_name}_test.txt"

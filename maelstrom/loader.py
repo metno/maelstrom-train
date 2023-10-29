@@ -835,10 +835,12 @@ class Loader:
         if self.patch_size is None:
             self.lats = dataset.latitude.values
             self.lons = dataset.longitude.values
+            self.elevs = dataset.altitude.values
         else:
             # TODO: Check if this is meshed correctly
             # TODO: These are then not technically lats and lons, but x and y
             self.lons, self.lats = np.meshgrid(np.arange(self.patch_size), np.arange(self.path_size))
+            self.elevs = np.zeros(self.lons.shape)
 
         # dataset.close()
 
