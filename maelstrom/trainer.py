@@ -29,6 +29,7 @@ class Trainer:
         model,
         optimizer,
         loss,
+        metrics,
         steps=1,
         callbacks=[],
         grad_type="mean",
@@ -45,6 +46,7 @@ class Trainer:
         self.model = model
         self.optimizer = optimizer
         self.loss = loss
+        self.metrics = metrics
         self.callbacks = tf.keras.callbacks.CallbackList(
             callbacks, add_history=True, model=self.model
         )
@@ -369,10 +371,12 @@ class Trainer:
 class Keras:
     """Standard keras trainer (e.g model.fit)"""
 
-    def __init__(self, model, optimizer, loss, callbacks=[]):
+    def __init__(self, model, optimizer, loss, metrics, callbacks=[]):
         self.model = model
         self.optimizer = optimizer
+
         self.loss = loss
+        self.metrics = metrics
         """
         self._callbacks = callbacks
         self.callbacks = tf.keras.callbacks.CallbackList(

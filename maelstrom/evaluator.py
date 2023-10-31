@@ -1,5 +1,6 @@
 import numpy as np
 import xarray as xr
+import tensorflow as tf
 
 import maelstrom
 
@@ -97,7 +98,7 @@ class Verif(Evaluator):
 
 
 class Aggregator(Evaluator):
-    def __init__(self, filename, leadtimes, loss, metrics)
+    def __init__(self, filename, leadtimes, loss, metrics):
         self.filename = filename
         self.leadtimes = leadtimes
         self.loss = loss
@@ -114,6 +115,10 @@ class Aggregator(Evaluator):
         """
         assert len(fcst.shape) == 3
         assert len(targets.shape) == 3
+
+        # Inputs are numpy arrays, but many of the loss functions need tf tensors
+        fcst = tf.cast(fcst, tf.float32)
+        targets = tf.cast(targets, tf.float32)
 
         curr_loss = self.loss(targets, fcst)
         curr_metrics = list()
@@ -142,7 +147,7 @@ class Aggregator(Evaluator):
                         leadtime // 3600,
                         meantarget,
                         meanfcst,
-                        loss,
+                        loss_value,
                     )
                 )
                 for metric_value in metric_values:

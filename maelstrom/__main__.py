@@ -270,6 +270,7 @@ def main():
     curr_args["model"] = model
     curr_args["optimizer"] = optimizer
     curr_args["loss"] = loss
+    curr_args["metrics"] = metrics
     trainer = maelstrom.trainer.get(**curr_args)
 
     # Note: We could add a check for num_trainable_parameters > 0
@@ -530,9 +531,10 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
     results = dict()
     model = trainer.model
     loss = trainer.loss
+    metrics = trainer.metrics
 
     evaluators = get_evaluators(
-        config, loader, model, loss, quantiles, output_folder, model_name, with_horovod
+        config, loader, model, loss, metrics, quantiles, output_folder, model_name, with_horovod
     )
 
     # Which input predictor is the raw forecast?
@@ -590,7 +592,6 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
                 for ileadtime in range(bpred.shape[1]):
                     leadtime = loader.get_leadtime_from_batch(batch, sample, ileadtime)
 
-                    fcst = bfcst[sample, ileadtime, ...]
                     pred = bpred[sample, ileadtime, ...]
                     targets = btargets[sample, ileadtime, ...]
 
@@ -674,7 +675,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
     return total_loss
 
 
-def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_name, with_horovod=False):
+def get_evaluators(config, loader, model, loss, metrics, quantiles, output_folder, model_name, with_horovod=False):
     if config is None:
         return []
 
@@ -702,7 +703,7 @@ def get_evaluators(config, loader, model, loss, quantiles, output_folder, model_
             )
         elif eval_type == "aggregator":
             filename = f"{output_folder}/{model_name}_test.txt"
-            evaluator = maelstrom.evaluator.Aggregator(filename, leadtimes, loss)
+            evaluator = maelstrom.evaluator.Aggregator(filename, leadtimes, loss, metrics)
         else:
             raise ValueError(f"Unknown validation type {eval_type}")
         evaluators += [evaluator]
