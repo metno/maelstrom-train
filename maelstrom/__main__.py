@@ -138,9 +138,11 @@ def main():
     loss = maelstrom.loss.get(config["loss"], quantiles)
     metrics = []
     if loss not in [maelstrom.loss.mae, maelstrom.loss.mae_prob]:
-        # within_loss = maelstrom.loss.get({"type": "within"}, quantiles)
+        # 
         metrics = [
-            # within_loss
+            maelstrom.loss.get({"type": "within"}, quantiles),
+            maelstrom.loss.get({"type": "reliability"}, quantiles),
+            maelstrom.loss.get({"type": "sharpness"}, quantiles)
             # maelstrom.loss.mae
         ]
     # metrics = [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]

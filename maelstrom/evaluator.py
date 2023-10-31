@@ -97,10 +97,11 @@ class Verif(Evaluator):
 
 
 class Aggregator(Evaluator):
-    def __init__(self, filename, leadtimes, loss):
+    def __init__(self, filename, leadtimes, loss, metrics)
         self.filename = filename
         self.leadtimes = leadtimes
         self.loss = loss
+        self.metrics = metrics
         # Store data as a list of tuples. Each tuple contains the metadata and loss values
         self.values = list()
 
@@ -115,9 +116,12 @@ class Aggregator(Evaluator):
         assert len(targets.shape) == 3
 
         curr_loss = self.loss(targets, fcst)
+        curr_metrics = list()
+        for metric in self.metrics:
+            curr_metrics += [metric(targets, fcst)]
         meanfcst = np.mean(fcst)
         meantarget = np.mean(targets)
-        values = (forecast_reference_time, leadtime, meantarget, meanfcst, curr_loss)
+        values = (forecast_reference_time, leadtime, meantarget, meanfcst, curr_loss, curr_metrics)
         self.values += [values]
 
     def sync(self):
@@ -126,10 +130,13 @@ class Aggregator(Evaluator):
 
     def write(self):
         with open(self.filename, "w") as file:
-            file.write("unixtime leadtime obs fcst loss\n")
-            for forecast_reference_time, leadtime, meantarget, meanfcst, loss in self.values:
+            file.write("unixtime leadtime obs fcst loss")
+            for metric in self.metrics:
+                file.write(f" {metric.__name__}")
+            file.write("\n")
+            for forecast_reference_time, leadtime, meantarget, meanfcst, loss_value, metric_values in self.values:
                 file.write(
-                    "%d %d %.5f %.5f %.5f\n"
+                    "%d %d %.5f %.5f %.5f"
                     % (
                         forecast_reference_time,
                         leadtime // 3600,
@@ -138,3 +145,6 @@ class Aggregator(Evaluator):
                         loss,
                     )
                 )
+                for metric_value in metric_values:
+                    file.write(f" %.5f" % metric_value)
+                file.write("\n")

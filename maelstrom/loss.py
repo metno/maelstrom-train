@@ -17,6 +17,10 @@ def get(config, quantile_levels=None):
         loss = maelstrom.loss.mae
     elif name == "mae_prob":
         loss = maelstrom.loss.mae_prob
+    elif name == "sharpness":
+        loss = maelstrom.loss.sharpness
+    elif name == "reliability":
+        loss = maelstrom.loss.reliability
     else:
         if name == "quantile_score":
             loss = lambda x, y: maelstrom.loss.quantile_score(x, y, quantile_levels, **args)
