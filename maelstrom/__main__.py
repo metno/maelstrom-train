@@ -140,12 +140,18 @@ def main():
     if loss not in [maelstrom.loss.mae, maelstrom.loss.mae_prob]:
         # 
         metrics = [
-            maelstrom.loss.get({"type": "within"}, quantiles),
-            maelstrom.loss.get({"type": "reliability"}, quantiles),
-            maelstrom.loss.get({"type": "sharpness"}, quantiles)
+            maelstrom.loss.get({"type": "quantile_score"}, quantiles),
+            # maelstrom.loss.get({"type": "within"}, quantiles),
+            # maelstrom.loss.get({"type": "reliability"}, quantiles),
+            # maelstrom.loss.get({"type": "sharpness"}, quantiles)
             # maelstrom.loss.mae
         ]
     # metrics = [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
+
+    if loss == maelstrom.loss.quantile_score:
+        metrics = [ maelstrom.loss.get({"type": "quantile_score_prob"}, quantiles)]
+    elif loss == maelstrom.loss.quantile_score_prob:
+        metrics = [ maelstrom.loss.get({"type": "quantile_score"}, quantiles)]
 
     if "model" in config:
         model_name = get_model_name_from_config(config["model"])
@@ -206,8 +212,9 @@ def main():
         model_metadata_logger = maelstrom.logger.Logger(f"{output_folder}/checkpoint/metadata.yml")
         model_metadata_logger.add("predictor_names", loader.predictor_names)
         normalization_map = dict()
-        for i, name in enumerate(loader.predictor_names):
-            normalization_map[name] = loader.coefficients[i, ...]
+        if loader.coefficients is not None:
+            for i, name in enumerate(loader.predictor_names):
+                normalization_map[name] = loader.coefficients[i, ...]
         model_metadata_logger.add("normalization", normalization_map)
         model_metadata_logger.add("with_leadtime", loader.with_leadtime)
         model_metadata_logger.add("diff_variable", loader.raw_predictor_name)
