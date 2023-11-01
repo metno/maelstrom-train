@@ -64,14 +64,15 @@ def quantile_score_prob(y_true, y_pred, quantile_levels, trim=None):
 
     qtloss = 0
     for i, quantile in enumerate(quantile_levels):
+        err = y_true_mean - y_pred[..., i]
         if weighted:
-            err = y_true_mean - y_pred[..., i]
             curr = (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
             qtloss += curr / (1 + y_true_std)
         else:
-            s = 0.6 * (K.log(quantile)*2 - K.log((1-quantile)*2))
-            err = y_true_mean + s - y_pred[..., i]
-            qtloss += (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
+            # err = y_true_mean + s - y_pred[..., i]
+            qs = (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
+            qs += 0.8 * y_true_std * K.exp(-1.4 * K.abs(err) / y_true_std) / 2
+            qtloss += qs
 
     if trim is not None:
         qtloss = qtloss[..., trim:-trim, trim:-trim]
