@@ -82,6 +82,11 @@ def mae(y_true, y_pred):
     return K.mean(K.abs(y_true[..., 0] - y_pred[..., 0]))
 
 
+def mean_std(y_true, y_pred):
+    """Mean of the target uncertainty (standard deviation)"""
+    return K.mean(y_true[..., 1])
+
+
 def mae_prob(y_true, y_pred):
     y_true_mean = y_true[..., 0]
     y_true_std = y_true[..., 1]

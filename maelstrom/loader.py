@@ -694,6 +694,10 @@ class Loader:
         """Subtract the raw_forecast from the target"""
         with tf.device(self.device):
             raw_predictor = tf.expand_dims(predictors[..., self.raw_predictor_index], -1)
+            if self.probabilistic_target:
+                # Don't subtract the raw forecast for the target uncertainty
+                zeros = tf.zeros(raw_predictor.shape, tf.float32)
+                raw_predictor = tf.concat([raw_predictor, zeros], -1)
             targets = tf.math.subtract(targets, raw_predictor)
 
         self.logger.add("diff", time.time() - s_time)
