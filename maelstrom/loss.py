@@ -59,7 +59,10 @@ def quantile_score_prob(y_true, y_pred, quantile_levels, trim=None):
     y_true_mean = y_true[..., 0]
     y_true_std = y_true[..., 1]
 
-    d = y_true_std * 1.28155  # scipy.stats.norm.ppf(0.1)
+    if trim is not None:
+        y_true_mean = y_true_mean[..., trim:-trim, trim:-trim]
+        y_true_std = y_true_std[..., trim:-trim, trim:-trim]
+
     weighted = False
 
     qtloss = 0
@@ -70,12 +73,9 @@ def quantile_score_prob(y_true, y_pred, quantile_levels, trim=None):
             qtloss += curr / (1 + y_true_std)
         else:
             # err = y_true_mean + s - y_pred[..., i]
-            qs = (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
-            qs += 0.8 * y_true_std * K.exp(-1.4 * K.abs(err) / y_true_std) / 2
-            qtloss += qs
+            qtloss += (quantile_levels[i] - tf.cast((err < 0), tf.float32)) * err
+            qtloss += 0.8 * y_true_std * K.exp(-1.4 * K.abs(err) / y_true_std) / 2
 
-    if trim is not None:
-        qtloss = qtloss[..., trim:-trim, trim:-trim]
     return K.mean(qtloss / len(quantile_levels))
 
 
