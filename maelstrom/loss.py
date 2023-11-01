@@ -56,12 +56,12 @@ def quantile_score_prob(y_true, y_pred, quantile_levels, trim=None):
     Weighted version:
     return K.mean((qtloss0 + qtloss1 + qtloss2) / (1 + y_true_std))
     """
+    if trim is not None:
+        y_true = y_true[..., trim:-trim, trim:-trim, :]
+        y_pred = y_pred[..., trim:-trim, trim:-trim, :]
+
     y_true_mean = y_true[..., 0]
     y_true_std = y_true[..., 1]
-
-    if trim is not None:
-        y_true_mean = y_true_mean[..., trim:-trim, trim:-trim]
-        y_true_std = y_true_std[..., trim:-trim, trim:-trim]
 
     weighted = False
 
