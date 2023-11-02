@@ -546,7 +546,7 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
 
     # Which input predictor is the raw forecast?
     if loader.predict_diff:
-        Ip = loader.predictor_names.index("air_temperature_2m")
+        Ip = loader.raw_predictor_index
     total_loss = 0
     count = 0
     dataset = loader.get_dataset()
@@ -584,9 +584,12 @@ def testing(config, loader, quantiles, trainer, output_folder, model_name, with_
 
             # Undo the prediction difference
             if loader.predict_diff:
-                btargets[..., 0] += bfcst[..., Ip]
+                add = bfcst[..., Ip]
+                add = loader.denormalize(add, loader.raw_predictor_name)
+
+                btargets[..., 0] += add
                 for p in range(num_outputs):
-                    bpred[..., p] += bfcst[..., Ip]
+                    bpred[..., p] += add
 
             curr_loss = float(loss(btargets, bpred))
             total_loss += curr_loss

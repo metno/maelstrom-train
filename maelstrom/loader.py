@@ -597,6 +597,17 @@ class Loader:
         self.logger.add("normalize", time.time() - s_time)
         return predictors, targets
 
+    def denormalize(self, array, name):
+        if name in self.predictor_names:
+            Ip = self.predictor_names.index(name)
+            a = self.coefficients[Ip, 0]
+            s = self.coefficients[Ip, 1]
+            array = array * s + a
+        else:
+            return array
+
+        return array
+
     def read_normalization0(self):
         coefficients = np.zeros([self.num_predictors, 2], np.float32)
         coefficients[:, 1] = 1
