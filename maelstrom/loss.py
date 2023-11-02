@@ -13,10 +13,12 @@ def get(config, quantile_levels=None):
     """
     name = config["type"]
     args = {k:v for k,v in config.items() if k != "type"}
+    index = 0
+    if quantile_levels is not None:
+        index = len(quantile_levels) // 2
+
     if name == "mae":
         loss = maelstrom.loss.mae
-    elif name == "mae_prob":
-        loss = maelstrom.loss.mae_prob
     elif name == "sharpness":
         loss = maelstrom.loss.sharpness
     elif name == "reliability":
@@ -26,10 +28,9 @@ def get(config, quantile_levels=None):
             loss = lambda x, y: maelstrom.loss.quantile_score(x, y, quantile_levels, **args)
         elif name == "quantile_score_prob":
             loss = lambda x, y: maelstrom.loss.quantile_score_prob(x, y, quantile_levels, **args)
+        elif name == "mae_prob":
+            loss = lambda x, y: maelstrom.loss.mae_prob(x, y, index, **args)
         elif name == "within":
-            index = 0
-            if quantile_levels is not None:
-                index = len(quantile_levels) // 2
             loss = lambda x, y: maelstrom.loss.within(x, y, index, **args)
         else:
             raise NotImplementedError(f"Unknown loss function {name}")
@@ -88,10 +89,10 @@ def mean_std(y_true, y_pred):
     return K.mean(y_true[..., 1])
 
 
-def mae_prob(y_true, y_pred):
+def mae_prob(y_true, y_pred, index=0):
     y_true_mean = y_true[..., 0]
     y_true_std = y_true[..., 1]
-    diff = K.abs(y_true_mean - y_pred[..., 0])
+    diff = K.abs(y_true_mean - y_pred[..., index])
     return K.mean(diff + 0.8 * y_true_std * K.exp(-1.4 / y_true_std * diff))
 
 
