@@ -52,7 +52,7 @@ class Verif(Evaluator):
         self.values += [values]
 
     def sync(self):
-        self.values = hvd.allgather_object(self.values)
+        allvalues = hvd.allgather_object(self.values)
         self.values = sum(allvalues, [])
 
     def write(self):
