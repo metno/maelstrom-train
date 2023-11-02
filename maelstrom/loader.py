@@ -837,9 +837,16 @@ class Loader:
         self.num_targets = 1 + self.probabilistic_target
 
         if self.patch_size is None:
-            self.lats = dataset.latitude.values
-            self.lons = dataset.longitude.values
-            self.elevs = dataset.altitude.values
+            if self.x_range is not None and self.y_range is not None:
+                Ix = slice(self.x_range[0], self.x_range[1])
+                Iy = slice(self.y_range[0], self.y_range[1])
+                self.lats = dataset.latitude.values[Iy, Ix]
+                self.lons = dataset.longitude.values[Iy, Ix]
+                self.elevs = dataset.altitude.values[Iy, Ix]
+            else:
+                self.lats = dataset.latitude.values
+                self.lons = dataset.longitude.values
+                self.elevs = dataset.altitude.values
         else:
             # TODO: Check if this is meshed correctly
             # TODO: These are then not technically lats and lons, but x and y
