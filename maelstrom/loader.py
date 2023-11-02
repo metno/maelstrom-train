@@ -842,7 +842,8 @@ class Loader:
                 Iy = slice(self.y_range[0], self.y_range[1])
                 self.lats = dataset.latitude.values[Iy, Ix]
                 self.lons = dataset.longitude.values[Iy, Ix]
-                self.elevs = dataset.altitude.values[Iy, Ix]
+                # This has a forecast_reference_time dimension for some reason
+                self.elevs = dataset.altitude.values[0, Iy, Ix]
             else:
                 self.lats = dataset.latitude.values
                 self.lons = dataset.longitude.values
