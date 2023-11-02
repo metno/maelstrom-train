@@ -75,6 +75,7 @@ class Verif(Evaluator):
             curr_frt, curr_leadtime, curr_fcst, curr_obs = self.values[t]
             It = np.where(frts == curr_frt)[0][0]
             Ilt = np.where(leadtimes == curr_leadtime)[0][0]
+            print(t, curr_obs.shape, curr_fcst.shape, [T, LT, L, Q])
             curr_fcst = np.reshape(curr_fcst, [L, Q])
             curr_obs = curr_obs.flatten()
             fcst[It, Ilt, :, :] = curr_fcst
@@ -84,8 +85,9 @@ class Verif(Evaluator):
         data_vars["time"] = frts
         data_vars["leadtime"] = leadtimes // 3600
         data_vars["lat"] = (("location",), lats)
-        data_vars["quantile"] = self.quantiles
         data_vars["lon"] = (("location", ), lons)
+        data_vars["altitude"] = (("location", ), elevs)
+        data_vars["quantile"] = self.quantiles
         data_vars["location"] = np.arange(L)
         data_vars["x"] = (("time", "leadtime", "location", "quantile"), fcst)
         if 0.5 in self.quantiles:
