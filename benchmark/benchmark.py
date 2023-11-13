@@ -186,7 +186,7 @@ def main():
                 print(f"Done {curr_file_index} files")
 
                 this_time = time.time() - time_last_file
-                this_size_gb = loader.size_gb / loader_num_files
+                this_size_gb = loader.size_gb / loader.num_files
                 print(f"   Curr time: {this_time:.2f} s")
                 print(f"   Curr performance: {this_size_gb / this_time:.2f} GB/s")
                 if with_horovod:
@@ -564,6 +564,7 @@ class Ap1Loader:
             dataset = dataset.cache(self.filename_cache)
 
         # Copy data to the GPU
+        # dataset.cache()
         dataset = dataset.map(self.to_gpu, num_parallel_calls)
         dataset = dataset.prefetch(1)
         return dataset
