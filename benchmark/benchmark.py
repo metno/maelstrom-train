@@ -603,7 +603,7 @@ class Ap1Loader:
         if self.shuffle_leadtimes:
             file_index = index // self.num_leadtimes
             leadtime_index = index % self.num_leadtimes
-            print(index, file_index, leadtime_index)
+            # print(index, file_index, leadtime_index)
         else:
             file_index = None
             leadtime_index = None
@@ -617,12 +617,11 @@ class Ap1Loader:
                     static_predictors = self.data["static_predictors"][index, ...]
                     targets = self.data["target_mean"][index, ...]
                 else:
-                    predictors = self.data["predictors"][index, leadtime_index, ...]
-                    static_predictors = self.data["static_predictors"][index, leadtime_index, ...]
-                    targets = self.data["target_mean"][index, leadtime_index, ...]
-                    predictors = np.expand_dims(predictors, -1)
-                    static_predictors = np.expand_dims(static_predictors, -1)
-                    targets = np.expand_dims(targets, -1)
+                    predictors = self.data["predictors"][file_index, leadtime_index, ...]
+                    static_predictors = self.data["static_predictors"][file_index, ...]
+                    targets = self.data["target_mean"][file_index, leadtime_index, ...]
+                    predictors = np.expand_dims(predictors, 0)
+                    targets = np.expand_dims(targets, 0)
 
                 targets = np.expand_dims(targets, -1)
 
