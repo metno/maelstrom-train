@@ -150,7 +150,7 @@ def main():
             # Do sharding on the dataset, instead of in the loader, since we might not have enough
             # files to support sharding into the number of processes
             val_loader = Ap1Loader(val_filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
-                    False, 1, args.filename_cache, args.shuffle_leadtimes, args.fake_data, args.debug)
+                    False, 1, args.filename_cache, False, args.fake_data, args.debug)
             val_dataset = val_loader.get_dataset(args.num_parallel_calls)
             if with_horovod:
                 val_dataset = val_dataset.shard(hvd.size(), hvd.rank())
