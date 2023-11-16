@@ -46,7 +46,7 @@ class Loader:
         with_leadtime=True,
         with_horovod=False,
         rank_split_strategy="blocks",
-        interleave_leadtime=False,
+        shuffle_leadtime=False,
     ):
         """Initialize data loader
         
@@ -72,7 +72,7 @@ class Loader:
             with_leadtime (bool): Include leadtime dimension in one sample
             with_horovod (bool): Deal with horovod?
             rank_split_strategy (str): How to split the dataset across ranks
-            interleave_leadtime (bool): If True, then read leadtimes randomly
+            shuffle_leadtime (bool): If True, then read leadtimes randomly
         """
         self.debug = debug
         self.extra_features = extra_features
@@ -90,7 +90,7 @@ class Loader:
         self.probabilistic_target = probabilistic_target
         self.with_horovod = with_horovod
         self.rank_split_strategy = rank_split_strategy
-        self.interleave_leadtime = interleave_leadtime
+        self.shuffle_leadtime = shuffle_leadtime
 
         self.x_range = x_range
         self.y_range = y_range
@@ -160,9 +160,12 @@ class Loader:
 
         # Set up dataset
         # cache=False seems to have no effect
-        self.data = xr.open_mfdataset(self.filenames, decode_timedelta=False, decode_times=False, combine="nested", concat_dim="time") # , cache=False)
-        limits = self.get_dimension_limits(self.data)
-        self.data = self.data.isel(**limits)
+        self.data = list()
+        for filename in self.filenames:
+            curr_data = xr.open_dataset(filename, decode_timedelta=False, decode_times=False)
+            limits = self.get_dimension_limits(curr_data)
+            curr_data = curr_data.isel(**limits)
+            self.data += [curr_data]
 
         self.load_metadata(self.data)
 
@@ -208,7 +211,7 @@ class Loader:
         if self.num_parallel_calls is not None:
             num_parallel_calls = self.num_parallel_calls
 
-        if self.interleave_leadtime:
+        if self.shuffle_leadtime:
             dataset = tf.data.Dataset.range(self.num_files * self.num_leadtimes)
             if randomize_order:
                 dataset = dataset.shuffle(len(self.filenames * self.num_leadtimes))
@@ -294,8 +297,11 @@ class Loader:
             dataset = dataset.unbatch()
             # Predictor shape: 256, 256, 14
 
-            if randomize_order:
-                dataset = dataset.shuffle(self.num_patches_per_file)
+            if randomize_order and self.num_patches_per_file > 1:
+                if self.shuffle_leadtime:
+                    dataset = dataset.shuffle(self.num_patches_per_file * 12)
+                else:
+                    dataset = dataset.shuffle(self.num_patches_per_file)
 
             # Batch so that the dataset has 4 dimensions
             dataset = dataset.batch(1)
@@ -466,7 +472,7 @@ class Loader:
         index = index.numpy()
         self.print(f"Start reading index={index}")
 
-        if self.interleave_leadtime:
+        if self.shuffle_leadtime:
             tindex = index // self.num_leadtimes
             lindex = [index % self.num_leadtimes]
         else:
@@ -475,15 +481,15 @@ class Loader:
 
         with tf.device(self.device):
             if not self.create_fake_data:
-                predictors = self.data["predictors"][tindex, lindex, ...]
-                static_predictors = self.data["static_predictors"][tindex, ...]
+                predictors = self.data[tindex]["predictors"][lindex, ...]
+                static_predictors = self.data[tindex]["static_predictors"][:]
 
                 if self.probabilistic_target:
-                    mean = np.expand_dims(self.data["target_mean"][tindex, lindex, ...], -1)
-                    std = np.expand_dims(self.data["target_std"][tindex, lindex, ...], -1)
+                    mean = np.expand_dims(self.data[tindex]["target_mean"][lindex, ...], -1)
+                    std = np.expand_dims(self.data[tindex]["target_std"][lindex, ...], -1)
                     targets = np.concatenate((mean, std), -1)
                 else:
-                    targets = self.data["target_mean"][tindex, lindex, ...]
+                    targets = self.data[tindex]["target_mean"][lindex, ...]
                     targets = np.expand_dims(targets, -1)
 
                 # Force explicit conversion here, so that we can account the time it takes
@@ -818,10 +824,11 @@ class Loader:
         #     limit["y"] = self.y_range
         return limit
 
-    def load_metadata(self, dataset):
+    def load_metadata(self, list_of_data):
         """Reads matadata from one file and stores relevant information in self"""
+        dataset = list_of_data[0]
         self.leadtimes = dataset.leadtime.to_numpy()
-        self.times = dataset.time.to_numpy()
+        self.times = np.array([d.time.to_numpy() for d in list_of_data])
         if not maelstrom.util.is_list(self.times):
             self.times = np.array([self.times])
         # if self.limit_leadtimes is not None:
@@ -854,7 +861,7 @@ class Loader:
                 self.lats = dataset.latitude.values[Iy, Ix]
                 self.lons = dataset.longitude.values[Iy, Ix]
                 # This has a forecast_reference_time dimension for some reason
-                self.elevs = dataset.altitude.values[0, Iy, Ix]
+                self.elevs = dataset.altitude.values[Iy, Ix]
             else:
                 self.lats = dataset.latitude.values
                 self.lons = dataset.longitude.values
