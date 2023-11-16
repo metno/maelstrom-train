@@ -517,7 +517,7 @@ def get_model(loader, num_outputs, configs, model_name, with_horovod=False):
 
             args["name"] = name
             return model, args
-    raise ValueError(f"Model {model} not defined in configuration file")
+    raise ValueError(f"Model {model_name} not defined in configuration file")
 
 
 def testing(config, loader, quantiles, trainer, output_folder, model_name, with_horovod):
