@@ -149,9 +149,11 @@ def main():
     # metrics = [maelstrom.loss.meanfcst, maelstrom.loss.meanobs]
 
     if loss.__name__ == "quantile_score":
-        metrics = [ maelstrom.loss.get({"type": "quantile_score_prob"}, quantiles)]
+        metrics = [ maelstrom.loss.get({"type": "quantile_score_prob", "trim": 32}, quantiles)]
+        metrics = []
     elif loss.__name__ == "quantile_score_prob":
-        metrics = [ maelstrom.loss.get({"type": "quantile_score"}, quantiles)]
+        metrics = [ maelstrom.loss.get({"type": "quantile_score", "trim": 32}, quantiles)]
+    # metrics += [maelstrom.loss.get({"type": "sharpness"}), maelstrom.loss.get({"type": "reliability"})]
 
     if "model" in config:
         model_name = get_model_name_from_config(config["model"])
