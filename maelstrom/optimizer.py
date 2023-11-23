@@ -17,10 +17,12 @@ def get(batches_per_epoch, **kwargs):
     name = name.lower()
     args = {k: v for k, v in kwargs.items() if k not in ["type", "learning_rate"]}
     if "learning_rate" in kwargs:
-        # Set to one epoch if not specified
-        lr_type = kwargs["learning_rate"]["type"]
-        if lr_type == "cosinedecayrestarts" and "first_decay_steps" not in kwargs["learning_rate"]:
-            kwargs["learning_rate"]["first_decay_steps"] = batches_per_epoch
+        # Learning rate can either be a dictionary or a scalar
+        if "type" in kwargs["learning_rate"]:
+            # Set to one epoch if not specified
+            lr_type = kwargs["learning_rate"]["type"]
+            if lr_type == "cosinedecayrestarts" and "first_decay_steps" not in kwargs["learning_rate"]:
+                kwargs["learning_rate"]["first_decay_steps"] = batches_per_epoch
         args["learning_rate"] = get_learning_rate(kwargs["learning_rate"])
     if name == "adam":
         optimizer = keras.optimizers.Adam(**args)
