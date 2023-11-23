@@ -299,7 +299,7 @@ class Loader:
 
             if randomize_order and self.num_patches_per_file > 1:
                 if self.shuffle_leadtime:
-                    dataset = dataset.shuffle(self.num_patches_per_file * 12)
+                    dataset = dataset.shuffle(self.num_patches_per_file * 50)
                 else:
                     dataset = dataset.shuffle(self.num_patches_per_file)
 
