@@ -424,7 +424,9 @@ class Ap1Loader:
         self.predictor_names += self.extra_predictor_names
 
         # cache=False seems to have no effect
-        self.data = xr.open_mfdataset(self.filenames, combine="nested", concat_dim="time") # , cache=False)
+        self.data = list()
+        for filename in self.filenames:
+            self.data += [xr.open_dataset(filename, decode_times=False, decode_timedelta=False)] # , cache=False)
         # Don't subset in this way, since it is highly inefficient
         # self.data = self.data.isel(x=range(1, 1790), y=range(1, 2310))
 
@@ -613,13 +615,13 @@ class Ap1Loader:
         with tf.device(self.device):
             if not self.create_fake_data:
                 if not self.shuffle_leadtimes:
-                    predictors = self.data["predictors"][index, ...]
-                    static_predictors = self.data["static_predictors"][index, ...]
-                    targets = self.data["target_mean"][index, ...]
+                    predictors = self.data["predictors"][index][:]
+                    static_predictors = self.data["static_predictors"][index][:]
+                    targets = self.data["target_mean"][index][:]
                 else:
-                    predictors = self.data["predictors"][file_index, leadtime_index, ...]
-                    static_predictors = self.data["static_predictors"][file_index, ...]
-                    targets = self.data["target_mean"][file_index, leadtime_index, ...]
+                    predictors = self.data[file_index]["predictors"][leadtime_index, ...]
+                    static_predictors = self.data[file_index]["static_predictors"][:]
+                    targets = self.data[file_index]["target_mean"][leadtime_index, ...]
                     predictors = np.expand_dims(predictors, 0)
                     targets = np.expand_dims(targets, 0)
 
