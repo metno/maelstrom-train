@@ -1,0 +1,13 @@
+training:
+    trainer:
+        type: keras
+    optimizer:
+        type: adam
+        clipnorm: 1.0
+        learning_rate:
+            type: cosinedecayrestarts
+            initial_learning_rate: 1.0e-3
+            t_mul: 1.0
+            m_mul: 1
+    num_epochs: 1
+    validation_frequency: 36 file

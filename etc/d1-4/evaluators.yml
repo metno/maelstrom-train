@@ -1,0 +1,4 @@
+evaluators:
+    - type: aggregator
+    - type: verif
+      sampling: 25

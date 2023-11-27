@@ -74,6 +74,15 @@ models:
       activation: leakyrelu
       downsampling_type: mean
     - type: Unet
+      # Downsampling
+      name: unet_f16_l6_c1_p2_dmean_swish
+      features: 16
+      layers: 6
+      conv_size: 1
+      pool_size: 2
+      activation: swish
+      downsampling_type: mean
+    - type: Unet
       # Downsampling and feature ratio
       name: unet_f16_l6_c1_p2_f1_dmean
       features: 16

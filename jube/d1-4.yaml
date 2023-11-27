@@ -10,21 +10,24 @@ parameterset:
         # _: "_raw_full"
         _: ""
         # _: "_basic"
+        # _: "_no_bias"
         # _: "_ta"
         # _: "_b12"
         # _: "_today"
       - name: experiment
         type: string
-        # _: opt1
-        _: opt1_e1
+        _: opt1
         # _: opt2
         #_: optraw
       - name: model
         type: string
-        # _: unet_f16_l6_c1_p2_leaky  # Benchmark
-        _: unet_f16_l6_c1_p2
-        # _: unet_f16_l6_c3_p2_leaky
-        # _: unet_f16_l6_c1_p2_leaky_dmean
+        # _: unet_f16_l6_c1_p2 # Benchmark
+        # _: unet_f16_l6_c1_p2_dmean
+        _: unet_f16_l6_c1_p2_dmean_swish
+        # _: unet_f16_l6_c1_p2, unet_f16_l6_c1_p2_f1, unet_f16_l6_c1_p2_dmean, unet_f16_l3_c1_p4, unet_f16_l6_c3_p2
+        # _: dense_f12_l6 # , unet_f16_l6_c1_p2_relu
+        # _: unet_f16_l6_c1_p2_bias
+        # _: unet_f16_l6_c1_p2_f1_bias
         # _: dense_f12_l6
         # _: raw_elev_corr
         # _: today
@@ -49,9 +52,15 @@ parameterset:
         type: int
         _: 0 # ,1,2
       - name: config_files
+        tag: "!prob"
         type: string
         # tag: "!test"
         _: "${homedir}/etc/d1-4/${experiment}.yml ${homedir}/etc/d1-4/loader${loader}.yml ${homedir}/etc/d1-4/common.yml"
+      - name: config_files
+        tag: prob
+        type: string
+        # tag: "!test"
+        _: "${homedir}/etc/d1-4/${experiment}.yml ${homedir}/etc/d1-4/loader_prob.yml ${homedir}/etc/d1-4/common.yml ${homedir}/etc/d1-4/prob_loss.yml"
         # - name: config_file
         # type: string
         # tag: "test"
@@ -168,7 +177,8 @@ parameterset:
         _: maelstrom
       - name: queue
         tag: jwb+!test
-        _: booster
+        _: develbooster
+        # _: booster
       - name: queue
         tag: jwb+test
         _: develbooster

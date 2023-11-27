@@ -1,0 +1,82 @@
+# Experiment2: Test different learning rates
+loader:
+    type: file
+    # filenames: [ "data/air_temperature/5TB/20200301T*Z.nc"]  # One file
+    # filenames: [ "data/air_temperature/5TB/2020*1T*Z.nc"]    # 36 files
+    filenames: [ "data/air_temperature/5TB/2021*0[1234]T*Z.nc" ] # 48 files
+    # filenames: [ "data/air_temperature/5TB/202*01T*Z.nc"]    # 24 files
+    normalization: data/air_temperature/normalization.yml
+    predict_diff: True
+    patch_size: 512
+    batch_size: 1
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+loader_validation:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210301T*Z.nc",
+                "data/air_temperature/5TB/20210315T*Z.nc",
+                "data/air_temperature/5TB/20210402T*Z.nc",
+                "data/air_temperature/5TB/20210416T*Z.nc",
+                "data/air_temperature/5TB/20210501T*Z.nc",
+                "data/air_temperature/5TB/20210515T*Z.nc",
+                "data/air_temperature/5TB/20210602T*Z.nc",
+                "data/air_temperature/5TB/20210616T*Z.nc",
+                "data/air_temperature/5TB/20210701T*Z.nc",
+                "data/air_temperature/5TB/20210715T*Z.nc",
+                "data/air_temperature/5TB/20210802T*Z.nc",
+                "data/air_temperature/5TB/20210816T*Z.nc",
+                "data/air_temperature/5TB/20210901T*Z.nc",
+                "data/air_temperature/5TB/20210915T*Z.nc",
+                "data/air_temperature/5TB/20211002T*Z.nc",
+                "data/air_temperature/5TB/20211016T*Z.nc",
+                "data/air_temperature/5TB/20211101T*Z.nc",
+                "data/air_temperature/5TB/20211115T*Z.nc",
+                "data/air_temperature/5TB/20211202T*Z.nc",
+                "data/air_temperature/5TB/20211216T*Z.nc",
+                "data/air_temperature/5TB/20220101T*Z.nc",
+                "data/air_temperature/5TB/20220115T*Z.nc",
+                "data/air_temperature/5TB/20220202T*Z.nc",
+                "data/air_temperature/5TB/20220216T*Z.nc"
+    ]
+    normalization: data/air_temperature/normalization.yml
+    # patch_size: 512
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    # filename_validation_cache: data/air_temperature/validation_cache
+    x_range: [300,1068]
+    y_range: [550,1062]
+    # x_range: [215, 1751]
+    # y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+loader_test:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
+                "data/air_temperature/5TB/20211*T*Z.nc",
+                "data/air_temperature/5TB/2022*T*Z.nc"]
+    normalization: data/air_temperature/normalization.yml
+    # patch_size: 512
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    # filename_validation_cache: data/air_temperature/validation_cache
+    # x_range: [300,1068]
+    # y_range: [550,1062]
+    x_range: [215, 1751]
+    y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y

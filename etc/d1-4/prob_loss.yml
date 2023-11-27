@@ -1,0 +1,4 @@
+# This configuration is used to benchmark HPC systems
+# It runs the benchmark model for a single file, over multiple epochs
+loss:
+    type: quantile_score_prob
