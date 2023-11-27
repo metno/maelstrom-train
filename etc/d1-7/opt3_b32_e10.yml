@@ -1,0 +1,12 @@
+training:
+    trainer:
+        type: keras
+    optimizer:
+        type: adam
+        clipnorm: 1.0
+        learning_rate:
+            type: piecewise
+            boundaries: [8010,16020,24030] # Number of samples (not epochs)
+            values: [1.0e-3,1.0e-4,1.0e-5,1.0e-6]
+    num_epochs: 10
+    validation_frequency: 36 file

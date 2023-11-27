@@ -1,0 +1,106 @@
+# Experiment2: Test different learning rates
+loader:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210311T*Z.nc",
+                "data/air_temperature/5TB/20210325T*Z.nc",
+                "data/air_temperature/5TB/20210412T*Z.nc",
+                "data/air_temperature/5TB/20210426T*Z.nc",
+                "data/air_temperature/5TB/20210511T*Z.nc",
+                "data/air_temperature/5TB/20210525T*Z.nc",
+                "data/air_temperature/5TB/20210612T*Z.nc",
+                "data/air_temperature/5TB/20210626T*Z.nc",
+                "data/air_temperature/5TB/20210711T*Z.nc",
+                "data/air_temperature/5TB/20210725T*Z.nc",
+                "data/air_temperature/5TB/20210812T*Z.nc",
+                "data/air_temperature/5TB/20210826T*Z.nc",
+                "data/air_temperature/5TB/20210911T*Z.nc",
+                "data/air_temperature/5TB/20210925T*Z.nc",
+                "data/air_temperature/5TB/20211012T*Z.nc",
+                "data/air_temperature/5TB/20211026T*Z.nc",
+                "data/air_temperature/5TB/20211111T*Z.nc",
+                "data/air_temperature/5TB/20211125T*Z.nc",
+                "data/air_temperature/5TB/20211212T*Z.nc",
+                "data/air_temperature/5TB/20211226T*Z.nc",
+                "data/air_temperature/5TB/20220111T*Z.nc",
+                "data/air_temperature/5TB/20220125T*Z.nc",
+                "data/air_temperature/5TB/20220212T*Z.nc",
+                "data/air_temperature/5TB/20220226T*Z.nc"
+    ]
+    normalization: data/air_temperature/normalization.yml
+    predict_diff: True
+    shuffle_leadtime: True
+    patch_size: 256
+    batch_size: 32
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    x_range: [215, 1751]
+    y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+loader_validation:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210301T*Z.nc",
+                "data/air_temperature/5TB/20210315T*Z.nc",
+                "data/air_temperature/5TB/20210402T*Z.nc",
+                "data/air_temperature/5TB/20210416T*Z.nc",
+                "data/air_temperature/5TB/20210501T*Z.nc",
+                "data/air_temperature/5TB/20210515T*Z.nc",
+                "data/air_temperature/5TB/20210602T*Z.nc",
+                "data/air_temperature/5TB/20210616T*Z.nc",
+                "data/air_temperature/5TB/20210701T*Z.nc",
+                "data/air_temperature/5TB/20210715T*Z.nc",
+                "data/air_temperature/5TB/20210802T*Z.nc",
+                "data/air_temperature/5TB/20210816T*Z.nc",
+                "data/air_temperature/5TB/20210901T*Z.nc",
+                "data/air_temperature/5TB/20210915T*Z.nc",
+                "data/air_temperature/5TB/20211002T*Z.nc",
+                "data/air_temperature/5TB/20211016T*Z.nc",
+                "data/air_temperature/5TB/20211101T*Z.nc",
+                "data/air_temperature/5TB/20211115T*Z.nc",
+                "data/air_temperature/5TB/20211202T*Z.nc",
+                "data/air_temperature/5TB/20211216T*Z.nc",
+                "data/air_temperature/5TB/20220101T*Z.nc",
+                "data/air_temperature/5TB/20220115T*Z.nc",
+                "data/air_temperature/5TB/20220202T*Z.nc",
+                "data/air_temperature/5TB/20220216T*Z.nc"
+    ]
+    normalization: data/air_temperature/normalization.yml
+    # patch_size: 512
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    # filename_validation_cache: data/air_temperature/validation_cache
+    x_range: [300,1068]
+    y_range: [550,1062]
+    # x_range: [215, 1751]
+    # y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
+loader_test:
+    type: file
+    filenames: ["data/air_temperature/5TB/20210[3-9]*T*Z.nc",
+                "data/air_temperature/5TB/20211*T*Z.nc",
+                "data/air_temperature/5TB/2022*T*Z.nc"]
+    normalization: data/air_temperature/normalization.yml
+    # patch_size: 512
+    batch_size: 1
+    predict_diff: True
+    with_leadtime: False
+    num_parallel_calls: 12
+    debug: False
+    # filename_validation_cache: data/air_temperature/validation_cache
+    # x_range: [300,1068]
+    # y_range: [550,1062]
+    x_range: [215, 1751]
+    y_range: [50, 2098]
+    extra_features:
+        - type: leadtime
+        - type: x
+        - type: y
