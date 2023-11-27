@@ -2,66 +2,58 @@ import argparse
 import numpy as np
 import time
 import sys
+import xarray as xr
+import netCDF4
 
 def main():
     parser = argparse.ArgumentParser("This program reads one AP1 file and computes the reading performance of the filesystem")
-    parser.add_argument("-f", default="/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc", help="Read data from these files (e.g.  /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc)", dest="files", nargs='*')
+    parser.add_argument("-f", default=["/p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc"], help="Read data from these files (e.g.  /p/scratch/deepacf/maelstrom/maelstrom_data/ap1/air_temperature/5TB/20200301T03Z.nc)", dest="files", nargs='*')
     parser.add_argument("-m", default="open_mfdataset", help="Which data loading method to use?", choices=["open_mfdataset", "open_dataset_load", "open_dataset", "netcdf", "raw"], dest="method")
-    parser.add_argument("-s", help="Shuffle leadtimes", dest="shuffle_leadtimes", action="store_true")
+    parser.add_argument("-s", help="Read each leadtime at a time", dest="read_single_leadtime", action="store_true")
+    parser.add_argument("-v", default=["predictors", "target_mean"], help="Which variables to read?", dest="variables", nargs='*')
 
     args = parser.parse_args()
 
     s_time = time.time()
     size = 0
 
-    # vars = ["predictors", "static_predictors", "target_mean"]
-    vars = ["predictors", "target_mean"]
     if args.method == "open_mfdataset":
         # Using xr.open_mfdataset and extracting the first time step
-        import xarray as xr
-        with xr.open_mfdataset(args.files, combine="nested", concat_dim="time") as ds:
+        chunks = {}
+        if args.read_single_leadtime:
+            chunks = {"leadtime": 1}
+        with xr.open_mfdataset(args.files, combine="nested", concat_dim="time", chunks=chunks) as ds:
             for t in range(len(args.files)):
-                for var in vars:
-                    if args.shuffle_leadtimes:
+                # print(t)
+                for var in args.variables:
+                    if args.read_single_leadtime:
                         for i in range(ds[var].shape[1]):
-                            print(i)
+                            # print(i)
                             q = ds[var][t, i, ...].load()
                             size += np.product(q.shape)*4
                     else:
                         q = ds[var][t, :, ...].load()
                         size += np.product(q.shape)*4
 
-    elif args.method == "open_mfdataset_load":
-        # Using xr.open_mfdataset and .load()
-        import xarray as xr
-        if args.shuffle_leadtimes:
-            raise ValueError("open_dataset_load not supported with -s")
-        with xr.open_mdataset(args.files) as ds:
-            ds.load()
-            for da in ds:
-                size += ds[da].size*4
-
     elif args.method == "open_dataset":
         # Using xr.open_dataset and extracting each variable, one by one
-        import xarray as xr
         for filename in args.files:
             with xr.open_dataset(filename) as ds:
-                for da in vars:
-                    if args.shuffle_leadtimes:
+                for da in args.variables:
+                    if args.read_single_leadtime:
                         for i in range(ds[da].shape[0]):
-                            q = ds[da][i, ...].values
+                            q = ds[da][i, ...].load()
                             size += q.size*4
                     else:
-                        q = ds[da][:].values
+                        q = ds[da][:].load()
                         size += q.size*4
 
     elif args.method == "netcdf":
         # Using NetCDF4 package
-        import netCDF4
         for filename in args.files:
             with netCDF4.Dataset(filename) as file:
-                for var in vars:
-                    if args.shuffle_leadtimes:
+                for var in args.variables:
+                    if args.read_single_leadtime:
                         for i in range(file.variables[var].shape[0]):
                             q = file.variables[var][i, ...]
                             size += np.product(q.shape) * 4
@@ -70,16 +62,22 @@ def main():
                         size += np.product(q.shape) * 4
 
     elif args.method == "raw":
-        if args.shuffle_leadtimes:
+        """Read the raw bytes out of the file. Note that this reads all data
+        in the file (i.e. ignoring -v)
+        """
+        if args.read_single_leadtime:
             raise ValueError("raw not supported with -s")
-        file = open(args.file, 'rb')
-        s_time = time.time();
-        size = 0
-        N = 10000000
-        x=file.read(N)
-        while x:
-            x=file.read(N)
-            size += N
+
+        for filename in args.files:
+            file = open(filename, 'rb')
+            s_time = time.time();
+            buffer_size = 10000000
+
+            x=file.read(buffer_size)
+            size = buffer_size
+            while x:
+                x=file.read(buffer_size)
+                size += buffer_size
     else:
         raise Exception(f"Unknown method {method}")
 
