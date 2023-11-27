@@ -604,6 +604,9 @@ class Loader:
         return predictors, targets
 
     def denormalize(self, array, name):
+        if self.coefficients is None:
+            return array
+
         if name in self.predictor_names:
             Ip = self.predictor_names.index(name)
             a = self.coefficients[Ip, 0]
