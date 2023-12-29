@@ -9,6 +9,9 @@ import resource
 import time
 import xarray as xr
 import yaml
+import pandas as pd
+from multiprocessing import Process, Queue, Event
+import sys
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -76,6 +79,7 @@ def main():
     for f in args.files:
         filenames += glob.glob(f)
 
+    # energy_profiler = get_energy_profiler(args.hardware)
 
     main_process = True
     num_processes = 1
@@ -121,7 +125,7 @@ def main():
     input_shape[1] = None
     input_shape[2] = None
     num_outputs = 3
-    model = Unet(input_shape, num_outputs, levels=6)
+    model = Unet(input_shape, num_outputs, layers=6)
     learning_rate = 1e-3
     loss = quantile_score
     optimizer = keras.optimizers.Adam(learning_rate)
@@ -607,7 +611,7 @@ class Ap1Loader:
             leadtime_index = index % self.num_leadtimes
             # print(index, file_index, leadtime_index)
         else:
-            file_index = None
+            file_index = index 
             leadtime_index = None
 
         self.print(f"Start reading index={index}")
@@ -615,9 +619,9 @@ class Ap1Loader:
         with tf.device(self.device):
             if not self.create_fake_data:
                 if not self.shuffle_leadtimes:
-                    predictors = self.data["predictors"][index][:]
-                    static_predictors = self.data["static_predictors"][index][:]
-                    targets = self.data["target_mean"][index][:]
+                    predictors = self.data[file_index]["predictors"][:]
+                    static_predictors = self.data[file_index]["static_predictors"][:]
+                    targets = self.data[file_index]["target_mean"][:]
                 else:
                     predictors = self.data[file_index]["predictors"][leadtime_index, ...]
                     static_predictors = self.data[file_index]["static_predictors"][:]
@@ -1022,16 +1026,20 @@ class TimingCallback(tf.keras.callbacks.Callback):
 """
 ML model
 """
-class Unet(keras.Model):
+class Unet0(keras.Model):
     def __init__(
         self,
         input_shape,
         num_outputs,
         features=16,
-        levels=3,
+        levels=6,
         pool_size=2,
-        conv_size=3,
-        upsampling_type="conv_transpose",
+        conv_size=1,
+        upsampling_type="upsampling",
+        batch_normalization=False,
+        activation="relu",
+        feature_ratio=2,
+        downsampling_type="max",
     ):
         """U-net
 
@@ -1053,6 +1061,10 @@ class Unet(keras.Model):
         self._pool_size = pool_size
         self._conv_size = conv_size
         self._upsampling_type = upsampling_type
+        self._batch_normalization = batch_normalization
+        self._downsampling_type = downsampling_type
+        self._activation = activation
+        self._feature_ratio = feature_ratio
 
         # Build the model
         inputs = keras.layers.Input(input_shape)
@@ -1119,6 +1131,219 @@ class Unet(keras.Model):
 
         return outputs
 
+class Unet(keras.Model):
+    def __init__(
+        self,
+        input_shape,
+        num_outputs,
+        features=16,
+        layers=6,
+        pool_size=2,
+        conv_size=1,
+        upsampling_type="upsampling",
+        separable=False,
+        with_leadtime=False,
+        batch_normalization=True,
+        downsampling_type="max",
+        activation="relu",
+        skipcon=True,
+        feature_ratio=2,
+        bn_momentum=0.99,
+        padding="same",
+        leadtime_index=None,
+        bias_indices=None,
+
+    ):
+        """U-net
+
+        Args:
+            features (int): Number of features in the first layer
+            layers (int): Depth of the U-net
+            pool_size (int): Pooling ratio (> 0)
+            upsampling_type (str): One of "upsampling" or "conv_transpose"
+            conv_size (int): Convolution size (> 0)
+            with_leadtime (bool): Should the last layer be leadtime dependent?
+        """
+        if upsampling_type not in ["upsampling", "conv_transpose", "upsampling_nearest"]:
+            raise ValueError(f"Unknown upsampling type {upsampling_type}")
+
+        self._features = features
+        self._layers = layers
+        self._pool_size = pool_size
+        self._conv_size = conv_size
+        self._with_leadtime = with_leadtime
+        self._upsampling_type = upsampling_type
+        self._separable = separable
+        self._batch_normalization = batch_normalization
+        self._downsampling_type = downsampling_type
+        self._activation = activation
+        self._skipcon = skipcon
+        self._feature_ratio = feature_ratio
+        self._bn_momentum = bn_momentum
+        self._padding = padding
+        self._leadtime_index = leadtime_index
+        self._bias_indices = bias_indices
+        self._num_outputs = num_outputs
+
+        if downsampling_type not in ["max", "mean"]:
+            raise ValuerError(f"Unknown downsampling type {downsampling_type}")
+
+        # Build the model
+        inputs = keras.layers.Input(input_shape)
+        outputs = self.get_outputs(inputs)
+
+        super().__init__(inputs, outputs)
+
+    def get_outputs(self, inputs):
+        outputs = inputs
+        layers = list()
+
+        features = self._features
+        padding = self._padding
+
+        if self._separable:
+            Conv = maelstrom.layers.DepthwiseConv2D
+            Conv = maelstrom.layers.SeparableConv2D
+            pool_size = [1, self._pool_size, self._pool_size]
+            conv_size = [self._conv_size, self._conv_size]
+            up_pool_size = [self._pool_size, self._pool_size]
+            up_conv_size = [1, self._conv_size, self._conv_size]
+            def Conv(output, features, conv_size, activation_name, batch_normalization):
+                for i in range(2):
+                    output = maelstrom.layers.SeparableConv3D(features, conv_size, padding=padding)(output)
+                    if batch_normalization:
+                        output = keras.layers.BatchNormalization(momentum=self._bn_momentum, scale=False, center=False)(output)
+                    activation_layer = get_activation(activation_name)
+                    output = activation_layer(output)
+                return output
+        else:
+            def Conv(output, features, conv_size, activation_name, batch_normalization):
+                for i in range(2):
+                    output = keras.layers.Conv3D(features, conv_size, padding=padding)(output)
+                    if batch_normalization:
+                        output = keras.layers.BatchNormalization(momentum=self._bn_momentum, scale=False, center=False)(output)
+                        # Activation should be after batch normalization
+                    activation_layer = get_activation(activation_name)
+                    output = activation_layer(output)
+                return output
+
+            pool_size = [1, self._pool_size, self._pool_size]
+            conv_size = [1, self._conv_size, self._conv_size]
+            up_pool_size = pool_size
+            up_conv_size = conv_size
+
+        # Downsampling
+        # conv -> conv -> max_pool
+        for i in range(self._layers - 1):
+            outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
+            layers += [outputs]
+            # print(i, outputs.shape)
+
+            name = f"L{i + 1}_pool"
+            if self._downsampling_type == "max":
+                outputs = keras.layers.MaxPooling3D(pool_size=pool_size, name=name)(outputs)
+            elif self._downsampling_type == "min":
+                outputs = keras.layers.MinPooling3D(pool_size=pool_size, name=name)(outputs)
+            elif self._downsampling_type == "mean":
+                outputs = keras.layers.AveragePooling3D(pool_size=pool_size, name=name)(outputs)
+            features *= self._feature_ratio
+
+        # conv -> conv
+        outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
+
+        # upconv -> concat -> conv -> conv
+        for i in range(self._layers - 2, -1, -1):
+            features /= self._feature_ratio
+            activation_layer = get_activation(self._activation)
+            # Upsampling
+            if self._upsampling_type == "upsampling":
+                # The original paper used this kind of upsampling
+                outputs = keras.layers.Conv3D(features, conv_size,
+                        activation=activation_layer, padding=padding)(
+                    outputs
+                )
+                UpConv = keras.layers.UpSampling3D
+                outputs = UpConv(pool_size, name=f"L{i + 2}_up")(outputs)
+                activation_layer = get_activation(self._activation)
+                # Do a 2x2 convolution to simulate "learnable" bilinear interpolation
+                outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
+                        padding=padding)(outputs)
+            elif self._upsampling_type == "upsampling_nearest":
+                outputs = keras.layers.Conv3D(features, conv_size,
+                        activation=activation_layer, padding="same")(
+                    outputs
+                )
+                UpConv = keras.layers.UpSampling3D
+                outputs = UpConv(pool_size)(outputs)
+                # Don't do a 2x2 convolution
+            elif self._upsampling_type == "conv_transpose":
+                # Some use this kind of upsampling. This seems to create a checkered pattern in the
+                # output, at least for me.
+                UpConv = keras.layers.Conv3DTranspose
+                outputs = UpConv(features, up_conv_size, strides=pool_size, padding=padding)(outputs)
+                outputs = keras.layers.Conv3D(features, [1, 2, 2], activation=activation_layer,
+                        padding=padding)(outputs)
+
+            # if i == 0 or self._skipcon:
+            if self._skipcon:
+                # collapse = tf.keras.layers.reshape(layers[i], [outputs)
+                # crop = tf.keras.layers.CenterCrop(outputs.shape[2], outputs.shape[3])(layers[i])
+                if self._padding == "valid":
+                    # Center and crop the skip-connection tensor, since it is larger than the
+                    # tensor passed from the lower level
+                    d00 = (layers[i].shape[2] - outputs.shape[2])
+                    d10 = (layers[i].shape[2] - outputs.shape[2]) - d00
+                    d01 = (layers[i].shape[3] - outputs.shape[3])
+                    d11 = (layers[i].shape[3] - outputs.shape[3]) - d01
+                    # print(d00, d10, d01, d11)
+                    # Would be nice to use tf.keras.layers.CenterCrop, but this doesn't work for 5D
+                    # tensors.
+                    crop = tf.keras.layers.Cropping3D(((0, 0), (d00, d10), (d01, d11)))(layers[i])
+                    outputs = keras.layers.concatenate((crop, outputs), axis=-1)
+                elif self._padding == "reflect":
+                    d00 = (layers[i].shape[2] - outputs.shape[2]) // 2
+                    d10 = (layers[i].shape[2] - outputs.shape[2]) - d00
+                    d01 = (layers[i].shape[3] - outputs.shape[3]) // 2
+                    d11 = (layers[i].shape[3] - outputs.shape[3]) - d01
+                    paddings = tf.constant([[0, 0], [0, 0], [d00, d10], [d01, d11], [0, 0]])
+                    expanded = tf.pad(outputs, paddings, "REFLECT")
+                    # print(paddings, layers[i].shape, outputs.shape, expanded.shape)
+                    outputs = keras.layers.concatenate((layers[i], expanded), axis=-1)
+                else:
+                    outputs = keras.layers.concatenate((layers[i], outputs), axis=-1, name=f"L{i + 1}_concat")
+            outputs = Conv(outputs, features, conv_size, self._activation, self._batch_normalization)
+
+        # Create a separate branch with f(leadtime) multiplied by each bias field
+        if self._leadtime_index is not None and len(self._bias_indices) > 0:
+            leadtime_input = inputs[..., self._leadtime_index]
+            leadtime_input = tf.expand_dims(leadtime_input, -1)
+            bias_inputs = [tf.expand_dims(inputs[..., i], -1) for i in self._bias_indices]
+
+            leadtime_mult = list()
+            for i in range(len(bias_inputs)):
+                curr_leadtime_input = leadtime_input
+                # Create a flexible function for leadtime
+                for j in range(4):
+                    activation_layer = "tanh"
+                    curr_leadtime_input = keras.layers.Dense(5, activation=activation_layer)(curr_leadtime_input)
+                curr_leadtime_input = keras.layers.Dense(1, name=f"leadtime_bias_{i}")(curr_leadtime_input)
+
+                # Multiply the leadtime function by the bias
+                curr = tf.multiply(curr_leadtime_input, bias_inputs[i])
+                leadtime_mult += [curr]
+            outputs = keras.layers.concatenate(leadtime_mult + [outputs], axis=-1)
+
+        # Dense layer at the end
+        if self._with_leadtime:
+            layer = keras.layers.Dense(self._num_outputs, activation="linear")
+            outputs = maelstrom.layers.LeadtimeLayer(layer, "dependent")(outputs)
+        else:
+            outputs = keras.layers.Dense(self._num_outputs, activation="linear")(
+                outputs
+            )
+
+        return outputs
+
 """
 Loss function
 """
@@ -1129,6 +1354,247 @@ def quantile_score(y_true, y_pred):
         err = y_true[..., 0] - y_pred[..., i]
         qtloss += (quantile - tf.cast((err < 0), tf.float32)) * err
     return K.mean(qtloss) / len(quantiles)
+
+def get_energy_profiler(hardware_name):
+    if hardware_name == "GC200_IPU":
+        return GetIPUPower
+    elif hardware_name in ['A100_GPU','H100_GPU']:
+        return GetNVIDIAPower
+    elif hardware_name == 'MI250_GPU':
+        return GetARMPower
+    else:
+        raise NotImplementedError(f"Unknown hardware_name {hardware_name}")
+
+#NVIDIA GPUS
+class GetNVIDIAPower(object):
+    
+    def __enter__(self):
+        self.end_event = Event()
+        self.power_queue = Queue()
+        
+        interval = 100 #ms
+        self.smip = Process(target=self._power_loop,
+                args=(self.power_queue, self.end_event, interval))
+        self.smip.start()
+        return self
+    
+    def _power_loop(self,queue, event, interval):
+        import pynvml as pynvml
+        pynvml.nvmlInit()
+        device_count = pynvml.nvmlDeviceGetCount()
+        device_list = [pynvml.nvmlDeviceGetHandleByIndex(idx) for idx in range(device_count)]
+        power_value_dict = {
+            idx : [] for idx in range(device_count)
+        }
+        power_value_dict['timestamps'] = []
+        last_timestamp = time.time()
+
+        while not event.is_set():
+            for idx,handle in enumerate(device_list):
+                power = pynvml.nvmlDeviceGetPowerUsage(handle)
+                power_value_dict[idx].append(power*1e-3)
+            timestamp = time.time()
+            power_value_dict['timestamps'].append(timestamp)
+            wait_for = max(0,1e-3*interval-(timestamp-last_timestamp))
+            time.sleep(wait_for)
+            last_timestamp = timestamp
+        queue.put(power_value_dict)
+
+    def __exit__(self, type, value, traceback):
+        self.end_event.set()
+        power_value_dict = self.power_queue.get()
+        self.smip.join()
+
+        self.df = pd.DataFrame(power_value_dict)
+        
+    def energy(self):
+        import numpy as np
+        _energy = []
+        energy_df = self.df.loc[:,self.df.columns != 'timestamps'].astype(float).multiply(self.df["timestamps"].diff(),axis="index")/3600
+        _energy = energy_df[1:].sum(axis=0).values.tolist()
+        return _energy
+
+    
+#ARM GPUS
+
+
+class GetARMPower(object):
+    def __enter__(self):
+        self.end_event = Event()
+        self.power_queue = Queue()
+        
+        interval = 100 #ms
+        self.smip = Process(target=self._power_loop,
+                args=(self.power_queue, self.end_event, interval))
+        self.smip.start()
+        return self
+    
+    def _power_loop(self,queue, event, interval):
+        import rsmiBindings as rmsi
+        ret = rmsi.rocmsmi.rsmi_init(0)
+        if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
+            raise RuntimeError("Failed initializing rocm_smi library")
+        device_count = rmsi.c_uint32(0)
+        ret = rmsi.rocmsmi.rsmi_num_monitor_devices(rmsi.byref(device_count))
+        if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
+            raise RuntimeError("Failed enumerating ROCm devices")
+        device_list = list(range(device_count.value))
+        power_value_dict = {
+            id : [] for id in device_list
+        }
+        power_value_dict['timestamps'] = []
+        last_timestamp = time.time()
+        start_energy_list = []
+        for id in device_list:
+            energy = rmsi.c_uint64()
+            energy_timestamp = rmsi.c_uint64()
+            energy_resolution = rmsi.c_float()
+            ret = rmsi.rocmsmi.rsmi_dev_energy_count_get(id, 
+                    rmsi.byref(energy),
+                    rmsi.byref(energy_resolution),
+                    rmsi.byref(energy_timestamp))
+            if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
+                raise RuntimeError(f"Failed getting Power of device {id}")
+            start_energy_list.append(round(energy.value*energy_resolution.value,2)) # unit is uJ
+
+        while not event.is_set():
+            for id in device_list:
+                power = rmsi.c_uint32()
+                ret = rmsi.rocmsmi.rsmi_dev_power_ave_get(id, 0, rmsi.byref(power))
+                if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
+                    raise RuntimeError(f"Failed getting Power of device {id}")
+                power_value_dict[id].append(power.value*1e-6) # value is uW
+            timestamp = time.time()
+            power_value_dict['timestamps'].append(timestamp)
+            wait_for = max(0,1e-3*interval-(timestamp-last_timestamp))
+            time.sleep(wait_for)
+            last_timestamp = timestamp
+
+        energy_list = [0.0 for _ in device_list]
+        for id in device_list:
+            energy = rmsi.c_uint64()
+            energy_timestamp = rmsi.c_uint64()
+            energy_resolution = rmsi.c_float()
+            ret = rmsi.rocmsmi.rsmi_dev_energy_count_get(id, 
+                    rmsi.byref(energy),
+                    rmsi.byref(energy_resolution),
+                    rmsi.byref(energy_timestamp))
+            if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
+                raise RuntimeError(f"Failed getting Power of device {id}")
+            energy_list[id] = round(energy.value*energy_resolution.value,2) - start_energy_list[id]
+
+        energy_list = [ (energy*1e-6)/3600 for energy in energy_list] # convert uJ to Wh
+        queue.put(power_value_dict)
+        queue.put(energy_list)
+
+    
+    def __exit__(self, type, value, traceback):
+        self.end_event.set()
+        power_value_dict = self.power_queue.get()
+        self.energy_list_counter = self.power_queue.get()
+        self.smip.join()
+
+        self.df = pd.DataFrame(power_value_dict)
+    def energy(self):
+        import numpy as np
+        _energy = []
+        energy_df = self.df.loc[:,self.df.columns != 'timestamps'].astype(float).multiply(self.df["timestamps"].diff(),axis="index")/3600
+        _energy = energy_df[1:].sum(axis=0).values.tolist()
+        return _energy,self.energy_list_counter
+
+    
+    
+    
+    
+    
+#IPUS
+
+class GetIPUPower(object):   
+    
+    def __enter__(self):
+        self.end_event = Event()
+        self.power_queue = Queue()
+        
+        interval = 100 #ms
+        self.smip = Process(target=self._power_loop,
+                args=(self.power_queue, self.end_event, interval))
+        self.smip.start()
+        return self
+
+
+    def pow_to_float(self,pow):
+        # Power is reported in the format xxx.xxW, so remove the last character.
+        # We also handle the case when the power reports as N/A.
+        try:
+            return float(pow[:-1])
+        except ValueError:
+            return 0
+    
+    def _power_loop(self,queue, event, interval):
+        import gcipuinfo
+        
+
+        ipu_info = gcipuinfo.gcipuinfo()
+        num_devices = len(ipu_info.getDevices())
+        
+        power_value_dict = {
+            idx : [] for idx in range(num_devices)
+        }
+        power_value_dict['timestamps'] = []
+       
+        last_timestamp = time.time()
+
+        while not event.is_set():
+            #for idx in range(num_devices):
+            gcipuinfo.IpuPower
+            device_powers=ipu_info.getNamedAttributeForAll(gcipuinfo.IpuPower)
+            device_powers = [self.pow_to_float(pow) for pow in device_powers if pow != "N/A"]
+            for idx in range(num_devices):
+                power_value_dict[idx].append(device_powers[idx])
+            timestamp = time.time()
+            power_value_dict['timestamps'].append(timestamp)
+            wait_for = max(0,1e-3*interval-(timestamp-last_timestamp))
+            time.sleep(wait_for)
+            last_timestamp = timestamp
+        queue.put(power_value_dict)
+
+    def __exit__(self, type, value, traceback):
+        self.end_event.set()
+        power_value_dict = self.power_queue.get()
+        self.smip.join()
+
+        self.df = pd.DataFrame(power_value_dict)
+        
+    def energy(self):
+        import numpy as np
+        _energy = []
+        energy_df = self.df.loc[:,self.df.columns != 'timestamps'].astype(float).multiply(self.df["timestamps"].diff(),axis="index")/3600
+        _energy = energy_df[1:].sum(axis=0).values.tolist()
+        return _energy
+
+
+    
+def get_activation(name, *args, **kwargs):
+    """Get an activation layer corresponding to the name
+
+    Args:
+        name (str): Name of layer
+        args (list): List of arguments to layer
+        kwargs (dict): Named arguments to layer
+
+    Returns:
+        keras.layer.Layer: An initialized layer
+    """
+
+    if name.lower() == "leakyrelu":
+        return keras.layers.LeakyReLU(*args, **kwargs)
+        # return keras.layers.LeakyReLU(alpha=0.05)
+    else:
+        return keras.layers.Activation(name)
+
+
+
+
 
 if __name__ == "__main__":
     main()
