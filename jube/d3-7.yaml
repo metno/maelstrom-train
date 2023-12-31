@@ -67,15 +67,15 @@ parameterset:
       - name: hardware_name
         type: string
         tag: jwb|jrc
-        _: A100_GPU
+        _: JSC-A100
       - name: hardware_name
         type: string
         tag: jwc
-        _: V100_GPU
+        _: JSC-V100
       - name: hardware_name
         type: string
         tag: ipu
-        _: GC200_IPU
+        _: JSC-GC200_IPU
       - name: hardware_name
         type: string
         tag: intel
@@ -91,7 +91,7 @@ parameterset:
       - name: hardware_name
         type: string
         tag: mi250x
-        _: MI250_GPU
+        _: JSC-MI250X
       - name: mode
         type: string
         _: train
@@ -169,7 +169,7 @@ parameterset:
       # NOTE: put n_procs here. If it is put in the different steps (train, load, infer), then jube won't
       # run since then threadspertask cannot be computed. It gives the following error:
       # Cannot evaluate "48 // $num_procs" for parameter "calc_threadspertask": invalid syntax (<string>, line 1)
-      - {name: n_cpu, _: 48, tag: jwb}
+      - {name: n_cpu, _: 96, tag: jwb}
       - {name: n_cpu, _: 40, tag: jwc}
       - {name: n_cpu, _: 144, tag: h100}
       - {name: n_cpu, _: 32, tag: e4intel|e4amd}
@@ -247,6 +247,7 @@ patternset:
    - name: perf_patterns
      pattern:
       - {name: jobid, type: int, _: "Submitted batch job $jube_pat_int" }
+      - {name: hostname, type: string, _: "Hostname: $jube_pat_wrd" }
       - {name: training_time, type: float, _: "Total training time: ${jube_pat_fp} s"}
       - {name: total_time, type: float, _: "Total runtime: ${jube_pat_fp} s"}
       - {name: data_loading_time, type: float, _: "Data loading overhead: ${jube_pat_fp} s"}
@@ -260,6 +261,11 @@ patternset:
       - {name: val_loss, type: float, _: "Final val loss:\\s+$jube_pat_fp"}
       - {name: cpu_mem, type: float, _: "Final CPU memory:.*peak: $jube_pat_fp GB"}
       - {name: gpu_mem, type: float, _: "Final GPU memory:.*peak: $jube_pat_fp GB"}
+      - {name: total_integrated_energy, type: float, _: "Integrated Total Energy: ${jube_pat_fp} Wh"}
+        # - {name: total_counter_energy, type: float, _: "Counter Total Energy: ${jube_pat_fp} J"}
+      - {name: max_power, type: float, _: "Max Power: ${jube_pat_fp} W"}
+      - {name: max_agg_power, type: float, _: "Max Aggregate Power: ${jube_pat_fp} W"}
+      - {name: mean_agg_power, type: float, _: "Mean Aggregate Power: ${jube_pat_fp} W"}
       - {name: performance, type: float, _: "Average performance:\\s+$jube_pat_fp GB/s"}
       - {name: node_id, type: string, _: "POWERMEASUREMENT Label = $jube_pat_wrd"}
       - {name: time_pat, type: int, _: "POWERMEASUREMENT: $jube_pat_int,$jube_pat_nint,$jube_pat_nint"}
@@ -285,9 +291,10 @@ result:
         sort: iter_pat
         column: 
           - {title: "JUBE id", _: jube_benchmark_id}
-          - {title: "JUBE WP", _: jube_wp_id}
+          - {title: "JUBE wP", _: jube_wp_id}
             #- {title: "Experiment", _: experiment}
           - {title: "JobID", _: jobid}
+          - {title: "Host", _: hostname}
           - {title: "Hardware", _: hardware_name}
             #- {title: "# nodes", _: nodes}
           - {title: "num processes", _: n_procs}
@@ -304,9 +311,11 @@ result:
           - {title: "val loss", _: val_loss}
           - {title: "max cpu mem", _: cpu_mem}
           - {title: "max gpu mem", _: gpu_mem}
-          - {title: "node_id", _: node_id}
-          - {title: "Max. Watts",      _: watt_pat_max}
-          - {title: "Avg. Watts",      _: watt_pat_avg}
+          - {title: "Integrated Total Energy [Wh]", _: total_integrated_energy}
+            # - {title: "Counter Total Energy [Wh]", _: total_counter_energy}
+          - {title: "Max Power [W]", _: max_power}
+          - {title: "Max Aggregate Power [W]", _: max_agg_power}
+          - {title: "Mean Aggregate Power [W]", _: mean_agg_power}
 
 step:
   - name: setup_venv

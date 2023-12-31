@@ -4,14 +4,15 @@ import glob
 import math
 import numpy as np
 import os
+import pandas as pd
 import psutil
 import resource
+import socket
+import sys
 import time
 import xarray as xr
 import yaml
-import pandas as pd
 from multiprocessing import Process, Queue, Event
-import sys
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 import tensorflow as tf
@@ -79,8 +80,6 @@ def main():
     for f in args.files:
         filenames += glob.glob(f)
 
-    # energy_profiler = get_energy_profiler(args.hardware)
-
     main_process = True
     num_processes = 1
     set_gpu_memory_growth()
@@ -102,6 +101,9 @@ def main():
     else:
         gpus = tf.config.experimental.list_physical_devices("GPU")
         print("Num GPUs Available: ", len(gpus))
+
+    if main_process:
+        energy_profiler = get_energy_profiler('A100_GPU')
 
     # Let the Loader do the sharding, because then we can shard using different filenames
     loader = Ap1Loader(filenames, args.patch_size, args.batch_size, args.normalization, args.with_leadtime,
@@ -250,8 +252,10 @@ def main():
         hvd.join()
     total_time = time.time() - s_time
     if main_process:
+        hostname = socket.gethostname().split('.')[0]
         print("")
         print("Benchmark configuration:")
+        print(f"   Hostname: {hostname}")
         print(f"   Batch size: {args.batch_size}")
         print(f"   Patch size: {args.patch_size}")
         print(f"   All leadtimes: {args.with_leadtime}")
@@ -318,6 +322,25 @@ def main():
             print(f"   Average performance: {loader_size_gb / total_time * args.epochs:.2f} GB/s")
             print_gpu_usage("   Final GPU memory: ")
             print_cpu_usage("   Final CPU memory: ")
+
+    if main_process:
+        energy_profiler.close()
+        energy_profiler.df.to_csv("EnergyFile-NVDA.csv")
+
+        max_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].max().max()
+        print(f"Max Power: {max_power:.2f} W")
+
+        max_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).max()
+        print(f"Max Aggregate Power: {max_agg_power:.2f} W")
+        
+        mean_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).mean()
+        print(f"Mean Aggregate Power: {mean_agg_power:.2f} W")
+        
+        mean_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).mean()
+        print(f"Mean Aggregate Power: {mean_agg_power:.2f} W")
+
+        energy_int = energy_profiler.energy() 
+        print(f"Integrated Total Energy: {np.sum(energy_int):.2f} Wh")
 
 
 def map_decorator1_to_2(func):
@@ -1357,18 +1380,18 @@ def quantile_score(y_true, y_pred):
 
 def get_energy_profiler(hardware_name):
     if hardware_name == "GC200_IPU":
-        return GetIPUPower
+        return GetIPUPower()
     elif hardware_name in ['A100_GPU','H100_GPU']:
-        return GetNVIDIAPower
+        return GetNVIDIAPower()
     elif hardware_name == 'MI250_GPU':
-        return GetARMPower
+        return GetARMPower()
     else:
         raise NotImplementedError(f"Unknown hardware_name {hardware_name}")
 
 #NVIDIA GPUS
 class GetNVIDIAPower(object):
     
-    def __enter__(self):
+    def __init__(self):
         self.end_event = Event()
         self.power_queue = Queue()
         
@@ -1376,7 +1399,6 @@ class GetNVIDIAPower(object):
         self.smip = Process(target=self._power_loop,
                 args=(self.power_queue, self.end_event, interval))
         self.smip.start()
-        return self
     
     def _power_loop(self,queue, event, interval):
         import pynvml as pynvml
@@ -1400,7 +1422,7 @@ class GetNVIDIAPower(object):
             last_timestamp = timestamp
         queue.put(power_value_dict)
 
-    def __exit__(self, type, value, traceback):
+    def close(self):
         self.end_event.set()
         power_value_dict = self.power_queue.get()
         self.smip.join()
@@ -1408,7 +1430,6 @@ class GetNVIDIAPower(object):
         self.df = pd.DataFrame(power_value_dict)
         
     def energy(self):
-        import numpy as np
         _energy = []
         energy_df = self.df.loc[:,self.df.columns != 'timestamps'].astype(float).multiply(self.df["timestamps"].diff(),axis="index")/3600
         _energy = energy_df[1:].sum(axis=0).values.tolist()
@@ -1419,7 +1440,7 @@ class GetNVIDIAPower(object):
 
 
 class GetARMPower(object):
-    def __enter__(self):
+    def __init__(self):
         self.end_event = Event()
         self.power_queue = Queue()
         
@@ -1427,7 +1448,6 @@ class GetARMPower(object):
         self.smip = Process(target=self._power_loop,
                 args=(self.power_queue, self.end_event, interval))
         self.smip.start()
-        return self
     
     def _power_loop(self,queue, event, interval):
         import rsmiBindings as rmsi
@@ -1488,7 +1508,7 @@ class GetARMPower(object):
         queue.put(energy_list)
 
     
-    def __exit__(self, type, value, traceback):
+    def close(self):
         self.end_event.set()
         power_value_dict = self.power_queue.get()
         self.energy_list_counter = self.power_queue.get()
@@ -1511,7 +1531,7 @@ class GetARMPower(object):
 
 class GetIPUPower(object):   
     
-    def __enter__(self):
+    def __init__(self):
         self.end_event = Event()
         self.power_queue = Queue()
         
@@ -1519,7 +1539,6 @@ class GetIPUPower(object):
         self.smip = Process(target=self._power_loop,
                 args=(self.power_queue, self.end_event, interval))
         self.smip.start()
-        return self
 
 
     def pow_to_float(self,pow):
@@ -1558,7 +1577,7 @@ class GetIPUPower(object):
             last_timestamp = timestamp
         queue.put(power_value_dict)
 
-    def __exit__(self, type, value, traceback):
+    def close(self):
         self.end_event.set()
         power_value_dict = self.power_queue.get()
         self.smip.join()
