@@ -3,6 +3,7 @@ import collections
 import glob
 import math
 import numpy as np
+import importlib.util
 import os
 import pandas as pd
 import psutil
@@ -332,9 +333,6 @@ def main():
 
         max_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).max()
         print(f"Max Aggregate Power: {max_agg_power:.2f} W")
-        
-        mean_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).mean()
-        print(f"Mean Aggregate Power: {mean_agg_power:.2f} W")
         
         mean_agg_power=energy_profiler.df.loc[:,(energy_profiler.df.columns != 'timestamps')].sum(axis=1).mean()
         print(f"Mean Aggregate Power: {mean_agg_power:.2f} W")
@@ -1378,15 +1376,32 @@ def quantile_score(y_true, y_pred):
         qtloss += (quantile - tf.cast((err < 0), tf.float32)) * err
     return K.mean(qtloss) / len(quantiles)
 
+def check_package(package_name):
+    if package_name == "rsmiBindings":
+        sys.path.append('/opt/rocm/libexec/rocm_smi')
+    spec = importlib.util.find_spec(package_name)
+    return spec is not None
+
 def get_energy_profiler(hardware_name):
-    if hardware_name == "GC200_IPU":
-        return GetIPUPower()
-    elif hardware_name in ['A100_GPU','H100_GPU']:
+    if check_package("pynvml"):
         return GetNVIDIAPower()
-    elif hardware_name == 'MI250_GPU':
+    elif check_package("rsmiBindings"):
         return GetARMPower()
+    elif check_package("gcipuinfo"):
+        return GetIPUPower()
     else:
-        raise NotImplementedError(f"Unknown hardware_name {hardware_name}")
+        print("Warning: Could not find a suitable package to get power usage")
+        return NoPower()
+
+class NoPower(object):
+    def __init__(self):
+        pass
+
+    def close(self):
+        pass
+
+    def energy(self):
+        return None
 
 #NVIDIA GPUS
 class GetNVIDIAPower(object):
@@ -1450,6 +1465,7 @@ class GetARMPower(object):
         self.smip.start()
     
     def _power_loop(self,queue, event, interval):
+        sys.path.append('/opt/rocm/libexec/rocm_smi')
         import rsmiBindings as rmsi
         ret = rmsi.rocmsmi.rsmi_init(0)
         if rmsi.rsmi_status_t.RSMI_STATUS_SUCCESS != ret:
@@ -1519,6 +1535,7 @@ class GetARMPower(object):
         import numpy as np
         _energy = []
         energy_df = self.df.loc[:,self.df.columns != 'timestamps'].astype(float).multiply(self.df["timestamps"].diff(),axis="index")/3600
+        print(energy_df)
         _energy = energy_df[1:].sum(axis=0).values.tolist()
         return _energy,self.energy_list_counter
 

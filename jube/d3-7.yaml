@@ -104,6 +104,8 @@ parameterset:
       - name: program_args
         type: string
         _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} -val ${validation_files} --norm ${normalization} -s"
+        # _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} --norm ${normalization} -s -f"
+        # _: "${input_files} -m train -b ${batch_size} -p ${patch_size} -j ${num_parallel_calls} -e ${nepochs} --norm ${normalization} -s"
   - name: globalParameter
     parameter:
       - name: modules
@@ -173,6 +175,7 @@ parameterset:
       - {name: n_cpu, _: 40, tag: jwc}
       - {name: n_cpu, _: 144, tag: h100}
       - {name: n_cpu, _: 32, tag: e4intel|e4amd}
+      - {name: n_cpu, _: 96, tag: mi250x}
       - name: SRUN_CPUS_PER_TASK
         export: true
         _: ${SLURM_CPUS_PER_TASK}
@@ -183,11 +186,14 @@ parameterset:
       - name: nodes
         _: 1
       - name: n_procs
-        tag: "!e4intel"
+        tag: "!e4intel+!mi250x"
         _: 4 # 1,2,4
       - name: n_procs
         tag: "e4intel"
         _: 1
+      - name: n_procs
+        tag: "mi250x"
+        _: 8
       - name: n_gpu
         _: $n_procs
       - name: taskspernode
@@ -224,7 +230,7 @@ parameterset:
         _: dc-h100
       - name: queue
         tag: mi250x
-        _: dc-mi250x
+        _: dc-mi200
       - name: queue
         tag: e4intel
         _: i-gpu-a100
@@ -232,6 +238,7 @@ parameterset:
         tag: e4amd
         _: a-gpu-mi100
       - name: gres
+        tag: jwb|jwc|jrc|h100
         _: gpu:$n_gpu
       - name: additional_job_config
         tag: e4intel|e4amd
