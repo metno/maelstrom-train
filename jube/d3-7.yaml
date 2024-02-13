@@ -30,7 +30,7 @@ parameterset:
         _: "$jube_wp_abspath/output_model"
 
       - name: program
-        tag: "h100"
+        tag: "h100|jrc|jwb"
         type: string
         _: --mpi=pspmix env PMIX_SECURITY_MODE=native apptainer run --nv $jube_benchmark_home/../h100.sif -- python -u $jube_benchmark_home/../benchmark/benchmark.py
       - name: program
@@ -39,7 +39,7 @@ parameterset:
         _: --mpi=pmi2 apptainer run $jube_benchmark_home/../mi250x.sif -- python -u $jube_benchmark_home/../benchmark/benchmark.py
       - name: program
         type: string
-        tag: "jwb|jwc|e4intel"
+        tag: "jwc|e4intel"
         _: python -u $jube_benchmark_home/../benchmark/benchmark.py
 
       - name: input_files
@@ -109,7 +109,7 @@ parameterset:
   - name: globalParameter
     parameter:
       - name: modules
-        tag: "jwb|jwc"
+        tag: "jwc"
         separator: |
         _: 
           module load Stages/2022 &&
@@ -176,6 +176,7 @@ parameterset:
       - {name: n_cpu, _: 144, tag: h100}
       - {name: n_cpu, _: 32, tag: e4intel|e4amd}
       - {name: n_cpu, _: 96, tag: mi250x}
+      - {name: n_cpu, _: 128, tag: jrc}
       - name: SRUN_CPUS_PER_TASK
         export: true
         _: ${SLURM_CPUS_PER_TASK}
@@ -203,12 +204,12 @@ parameterset:
         type: int
         _:  $n_cpu // $n_procs
       - name: timelimit
-        _: "01:30:00"
+        _: "00:20:00"
       - name: account
         tag: jwb|jwc
         _: deepacf
       - name: account
-        tag: h100|mi250x
+        tag: h100|mi250x|jrc
         _: exalab
       - name: account
         tag: e4amd|e4intel
@@ -228,6 +229,9 @@ parameterset:
       - name: queue
         tag: h100
         _: dc-h100
+      - name: queue
+        tag: jrc
+        _: dc-gpu
       - name: queue
         tag: mi250x
         _: dc-mi200
