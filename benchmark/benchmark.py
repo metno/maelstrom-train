@@ -131,7 +131,11 @@ def main():
     model = Unet(input_shape, num_outputs, layers=6)
     learning_rate = 1e-3
     loss = quantile_score
-    optimizer = keras.optimizers.Adam(learning_rate)
+    try:
+        # Try this one first, since it is needed in newer versions of horovod
+        optimizer = keras.optimizers.legacy.Adam(learning_rate)
+    except Exception as e:
+        optimizer = keras.optimizers.Adam(learning_rate)
     callbacks = []
     if with_horovod:
         optimizer = hvd.DistributedOptimizer(optimizer, backward_passes_per_step=1,
