@@ -30,7 +30,7 @@ h5py==3.8.0
 idna==3.4
 importlib-metadata==6.0.0
 Jinja2==3.1.2
-keras==2.11.0
+keras==3.15.0
 libclang==15.0.6.1
 locket==1.0.0
 Magics==1.5.8
