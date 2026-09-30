@@ -41,7 +41,7 @@ multiurl==0.2.0
 netCDF4==1.6.2
 networkx==3.0
 numpy==1.21.1
-oauthlib==3.2.2
+oauthlib==4.0.0
 opt-einsum==3.3.0
 packaging==23.0
 pandas==1.4.4
