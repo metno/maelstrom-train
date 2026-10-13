@@ -20,7 +20,7 @@ entrypoints==0.4
 filelock==3.9.0
 findlibs==0.0.2
 flatbuffers==23.1.21
-fsspec==2023.1.0
+fsspec==2026.6.0
 gast==0.4.0
 google-auth==2.16.0
 google-auth-oauthlib==0.4.6
